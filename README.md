@@ -39,7 +39,9 @@ increments, or use the **−** and **+** buttons to change it by 5%. Changes tak
 effect immediately and are saved on the board for the next power-on. Settings
 also shows the percentage of the program flash partition used by the installed
 firmware. This does not include the separate data partition or represent all
-32 MB of flash. Everything fits on one screen without scrolling.
+32 MB of flash. Everything fits on one screen without scrolling. Battery and
+charging values are read when Settings opens; leave and reopen it to refresh
+them.
 
 ## Add or replace the BOOT sound
 

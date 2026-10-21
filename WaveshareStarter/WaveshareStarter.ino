@@ -84,6 +84,8 @@ uint8_t audioVolume = 60;
 volatile bool touchPending = false;
 String apName;
 String apPassword;
+String settingsBatterySnapshot;
+String settingsPowerSnapshot;
 String savedSsid;
 String savedPassword;
 unsigned long connectStarted = 0;
@@ -92,7 +94,6 @@ unsigned long bootPressedAt = 0;
 unsigned long bootLastChangeAt = 0;
 unsigned long bootLastTapAt = 0;
 unsigned long audioPowerDownAt = 0;
-unsigned long lastDraw = 0;
 unsigned long lastLog = 0;
 unsigned long lastTap = 0;
 size_t audioOffset = 0;
@@ -249,6 +250,12 @@ String batteryText() {
   return "Battery: " + String(power.getBattVoltage() / 1000.0f, 2) + " V";
 }
 
+String powerStatusText() {
+  if (!powerReady) return "";
+  return String("USB: ") + (power.isVbusIn() ? "yes" : "no") +
+         "   CHARGING: " + (power.isCharging() ? "yes" : "no");
+}
+
 void drawLauncher() {
   chrome("", false, true);
   gfx->fillRoundRect(151, 65, 164, 48, 12, BG);
@@ -300,12 +307,9 @@ String programFlashText() {
 
 void drawSettings() {
   chrome("SETTINGS");
-  textCentered(batteryText(), 145, 2, WHITE);
-  if (powerReady) {
-    String powerText = String("USB: ") + (power.isVbusIn() ? "yes" : "no") +
-                       "   CHARGING: " + (power.isCharging() ? "yes" : "no");
-    textCentered(powerText, 173, 2, MUTED);
-  }
+  textCentered(settingsBatterySnapshot, 145, 2, WHITE);
+  if (!settingsPowerSnapshot.isEmpty())
+    textCentered(settingsPowerSnapshot, 173, 2, MUTED);
   if (networkMode == CONNECTED) {
     textCentered("Wi-Fi connected", 209, 2, CYAN);
     textCentered(WiFi.localIP().toString(), 238, 2, WHITE);
@@ -319,8 +323,8 @@ void drawSettings() {
     textCentered("Connecting to Wi-Fi", 220, 2, CYAN);
   }
   textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 294, 1, MUTED);
-  textCentered(programFlashText(), 308, 1, MUTED);
-  textCentered("VOLUME " + String(audioVolume) + "%", 325, 2, WHITE);
+  textCentered(programFlashText(), 307, 2, CYAN);
+  textCentered("VOLUME " + String(audioVolume) + "%", 327, 2, WHITE);
 
   gfx->fillRoundRect(VOLUME_MINUS_X, VOLUME_BUTTON_Y,
                      VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, PANEL);
@@ -507,7 +511,11 @@ void updateSpin() {
 void handleTap(int x, int y) {
   if (screen == LAUNCHER) {
     if (x >= 84 && x <= 382 && y >= 170 && y <= 240) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 262 && y <= 332) screen = STATUS_SETTINGS;
+    else if (x >= 84 && x <= 382 && y >= 262 && y <= 332) {
+      settingsBatterySnapshot = batteryText();
+      settingsPowerSnapshot = powerStatusText();
+      screen = STATUS_SETTINGS;
+    }
   } else {
     if (x >= 91 && x <= 184 && y >= 91 && y <= 136) {
       screen = LAUNCHER;
@@ -748,10 +756,9 @@ void loop() {
   pollTouch();
   updateSpin();
   pumpAudio();
-  if (screenDirty || (screen == STATUS_SETTINGS && millis() - lastDraw > 5000)) {
+  if (screenDirty) {
     drawScreen();
     screenDirty = false;
-    lastDraw = millis();
   }
   if (millis() - lastLog > 5000) {
     logStatus();

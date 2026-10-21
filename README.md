@@ -34,10 +34,12 @@ stored in the firmware, so playback works without Wi-Fi. A single tap has no
 action. The three-second Wi-Fi reset now waits until BOOT is released before
 restarting, preventing an accidental entry into flashing mode.
 
-In **Settings**, tap the volume bar to choose a level from 0 to 100, or use the
-**−** and **+** buttons to change it by 10. Changes take effect immediately and
-are saved on the board for the next power-on. The status information and volume
-control fit on one screen without scrolling.
+In **Settings**, tap the volume bar to choose a level from 0 to 100 in 5%
+increments, or use the **−** and **+** buttons to change it by 5%. Changes take
+effect immediately and are saved on the board for the next power-on. Settings
+also shows the percentage of the program flash partition used by the installed
+firmware. This does not include the separate data partition or represent all
+32 MB of flash. Everything fits on one screen without scrolling.
 
 ## Add or replace the BOOT sound
 

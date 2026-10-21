@@ -8,6 +8,7 @@
 #include <Wire.h>
 #include "TouchDrvCST.hpp"
 #include "es8311.h"
+#include "esp_ota_ops.h"
 #include "esp_random.h"
 #include "pin_config.h"
 #include "XPowersLib.h"
@@ -286,6 +287,17 @@ void drawSpinner() {
   }
 }
 
+String programFlashText() {
+  const esp_partition_t *partition = esp_ota_get_running_partition();
+  uint32_t usedBytes = ESP.getSketchSize();
+  if (!partition || !partition->size || !usedBytes) {
+    return "Program flash: unavailable";
+  }
+  uint32_t percent = (static_cast<uint64_t>(usedBytes) * 100 +
+                      partition->size / 2) / partition->size;
+  return "Program flash: " + String(min(percent, uint32_t(100))) + "% used";
+}
+
 void drawSettings() {
   chrome("SETTINGS");
   textCentered(batteryText(), 145, 2, WHITE);
@@ -306,8 +318,9 @@ void drawSettings() {
   } else {
     textCentered("Connecting to Wi-Fi", 220, 2, CYAN);
   }
-  textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 304, 1, MUTED);
-  textCentered("VOLUME " + String(audioVolume) + "%", 322, 2, WHITE);
+  textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 294, 1, MUTED);
+  textCentered(programFlashText(), 308, 1, MUTED);
+  textCentered("VOLUME " + String(audioVolume) + "%", 325, 2, WHITE);
 
   gfx->fillRoundRect(VOLUME_MINUS_X, VOLUME_BUTTON_Y,
                      VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, PANEL);
@@ -503,9 +516,9 @@ void handleTap(int x, int y) {
       startSpin();
     } else if (screen == STATUS_SETTINGS && y >= 343 && y <= 394) {
       if (x >= VOLUME_MINUS_X && x < VOLUME_MINUS_X + VOLUME_BUTTON_SIZE) {
-        setAudioVolume(audioVolume > 10 ? audioVolume - 10 : 0);
+        setAudioVolume(audioVolume > 5 ? audioVolume - 5 : 0);
       } else if (x >= VOLUME_PLUS_X && x < VOLUME_PLUS_X + VOLUME_BUTTON_SIZE) {
-        setAudioVolume(min(100, static_cast<int>(audioVolume) + 10));
+        setAudioVolume(min(100, static_cast<int>(audioVolume) + 5));
       } else if (x >= VOLUME_TRACK_X && x <= VOLUME_TRACK_X + VOLUME_TRACK_WIDTH) {
         int raw = (x - VOLUME_TRACK_X) * 100 / VOLUME_TRACK_WIDTH;
         setAudioVolume(min(100, ((raw + 2) / 5) * 5));
@@ -653,6 +666,8 @@ void logStatus() {
   }
   Serial.print(" | speaker: ");
   Serial.print(audioReady ? "ready" : "unavailable");
+  Serial.print(" | ");
+  Serial.print(programFlashText());
   Serial.println();
 }
 

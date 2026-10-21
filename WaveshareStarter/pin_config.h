@@ -1,0 +1,17 @@
+#pragma once
+
+// ESP32-S3-Touch-AMOLED-1.75C pin mapping from Waveshare's board example.
+#define XPOWERS_CHIP_AXP2101
+
+#define LCD_SDIO0 4
+#define LCD_SDIO1 5
+#define LCD_SDIO2 6
+#define LCD_SDIO3 7
+#define LCD_SCLK 38
+#define LCD_RESET 1
+#define LCD_CS 12
+#define LCD_WIDTH 466
+#define LCD_HEIGHT 466
+
+#define IIC_SDA 15
+#define IIC_SCL 14

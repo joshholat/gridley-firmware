@@ -22,8 +22,11 @@ label alone does not discover bars; edit the list as well if changing areas.
 **Grid Maze** is a small fixed Tron-style maze. Tilt Gridley to move the glowing
 puck through the cyan corridors to the gold exit. The onboard QMI8658 motion
 sensor drives the puck; tapping the maze nudges it one square in the direction
-you tapped. When the exit is reached, tap the maze to replay. If the sensor is
-unavailable, touch control still works. The route is fixed in this first version.
+you tapped. Downward movement needs a little more tilt, so a normal viewing
+angle is less likely to move the puck. Reaching the exit triggers a short
+pixel-art explosion and congratulations screen, then restarts the maze
+automatically. If the sensor is unavailable, touch control still works. The
+route is fixed in this first version.
 
 If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network

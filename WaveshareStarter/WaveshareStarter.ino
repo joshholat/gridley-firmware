@@ -80,6 +80,9 @@ constexpr int MAZE_X = 107;
 constexpr int MAZE_Y = 143;
 constexpr uint32_t MAZE_STEP_MS = 170;
 constexpr float MAZE_TILT_THRESHOLD = 0.17f;
+constexpr float MAZE_DOWN_TILT_THRESHOLD = 0.32f;
+constexpr uint32_t MAZE_BURST_MS = 960;
+constexpr uint32_t MAZE_RESTART_MS = 3600;
 const char *const MAZE_ROWS[MAZE_SIZE] = {
     "#########",
     "#S..#...#",
@@ -130,6 +133,8 @@ bool mazeWon = false;
 float mazeTiltX = 0;
 float mazeTiltY = 0;
 unsigned long lastMazeStep = 0;
+unsigned long mazeWonAt = 0;
+int mazeWinFrame = -1;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -334,14 +339,71 @@ void drawMazePlayer() {
   gfx->fillCircle(x, y, 6, WHITE);
 }
 
+void drawMazeBurst(int frame) {
+  gfx->fillScreen(BG);
+  gfx->drawCircle(233, 233, 224, BLUE);
+  for (int p = 66; p <= 402; p += 28) {
+    gfx->drawFastVLine(p, 66, 336, MAZE_WALL);
+    gfx->drawFastHLine(66, p, 336, MAZE_WALL);
+  }
+
+  // Chunky color shards radiate like an 8-bit spray-paint explosion.
+  const int8_t dx[] = {8, 7, 6, 3, 0, -3, -6, -7,
+                       -8, -7, -6, -3, 0, 3, 6, 7};
+  const int8_t dy[] = {0, 3, 6, 7, 8, 7, 6, 3,
+                       0, -3, -6, -7, -8, -7, -6, -3};
+  const uint16_t paint[] = {CYAN, MAZE_GOLD, PURPLE, WHITE, BLUE};
+  int reach = 18 + frame * 20;
+  for (int i = 0; i < 16; ++i) {
+    int x = 233 + reach * dx[i] / 8;
+    int y = 233 + reach * dy[i] / 8;
+    int size = 6 + (i % 3) * 3;
+    gfx->fillRect(x - size / 2, y - size / 2, size, size,
+                  paint[(i + frame) % 5]);
+    if (frame > 1) {
+      int trailX = 233 + (reach - 27) * dx[i] / 8;
+      int trailY = 233 + (reach - 27) * dy[i] / 8;
+      gfx->fillRect(trailX - 2, trailY - 2, 5, 5, paint[(i + 2) % 5]);
+    }
+  }
+  gfx->setTextSize(4);
+  gfx->setTextColor(PURPLE);
+  gfx->setCursor(165, 219);
+  gfx->print("KAPOW!");
+  gfx->setTextColor(CYAN);
+  gfx->setCursor(161, 215);
+  gfx->print("KAPOW!");
+}
+
+void drawMazeWinMessage() {
+  gfx->fillScreen(BG);
+  gfx->drawCircle(233, 233, 224, BLUE);
+  for (int i = 0; i < 20; ++i) {
+    int x = 87 + (i * 73) % 292;
+    int y = 85 + (i * 109) % 295;
+    gfx->fillRect(x, y, 5 + i % 3 * 3, 5 + i % 3 * 3,
+                  i % 3 == 0 ? MAZE_GOLD : i % 3 == 1 ? CYAN : PURPLE);
+  }
+  gfx->fillRoundRect(71, 164, 324, 140, 18, MAZE_WALL);
+  gfx->drawRoundRect(71, 164, 324, 140, 18, CYAN);
+  textCentered("GRID CLEARED", 187, 3, WHITE);
+  textCentered("CONGRATS, USER", 239, 2, MAZE_GOLD);
+  textCentered("MAZE RESTARTING...", 279, 1, MUTED);
+}
+
 void drawMazeStatus() {
   gfx->fillRect(104, 407, 258, 23, BG);
-  if (mazeWon) textCentered("GRID CLEARED! TAP TO REPLAY", 412, 1, MAZE_GOLD);
-  else if (imuReady) textCentered("TILT TO MOVE  /  TAP TO NUDGE", 412, 1, MUTED);
+  if (imuReady) textCentered("TILT TO MOVE  /  TAP TO NUDGE", 412, 1, MUTED);
   else textCentered("SENSOR OFFLINE  /  TAP TO MOVE", 412, 1, MAZE_GOLD);
 }
 
 void drawMaze() {
+  if (mazeWon) {
+    unsigned long elapsed = millis() - mazeWonAt;
+    if (elapsed < MAZE_BURST_MS) drawMazeBurst(elapsed / 120);
+    else drawMazeWinMessage();
+    return;
+  }
   chrome("GRID MAZE");
   textCentered("REACH THE GOLD EXIT", 121, 1, MUTED);
   for (int row = 0; row < MAZE_SIZE; ++row) {
@@ -359,6 +421,8 @@ void resetMaze() {
   mazeWon = false;
   mazeTiltX = mazeTiltY = 0;
   lastMazeStep = 0;
+  mazeWonAt = 0;
+  mazeWinFrame = -1;
   screenDirty = true;
 }
 
@@ -376,13 +440,38 @@ bool stepMaze(int dRow, int dCol) {
   drawMazePlayer();
   if (mazeWon) {
     Serial.println("Grid Maze cleared");
-    drawMazeStatus();
+    mazeWonAt = millis();
+    mazeWinFrame = 0;
+    drawMazeBurst(0);
   }
   return true;
 }
 
+void updateMazeCelebration() {
+  unsigned long elapsed = millis() - mazeWonAt;
+  if (elapsed >= MAZE_RESTART_MS) {
+    resetMaze();
+  } else if (elapsed >= MAZE_BURST_MS) {
+    if (mazeWinFrame != 100) {
+      drawMazeWinMessage();
+      mazeWinFrame = 100;
+    }
+  } else {
+    int frame = elapsed / 120;
+    if (frame != mazeWinFrame) {
+      drawMazeBurst(frame);
+      mazeWinFrame = frame;
+    }
+  }
+}
+
 void updateMaze() {
-  if (screen != GRID_MAZE || !imuReady || mazeWon || !displayReady) return;
+  if (screen != GRID_MAZE || !displayReady) return;
+  if (mazeWon) {
+    updateMazeCelebration();
+    return;
+  }
+  if (!imuReady) return;
   unsigned long now = millis();
   if (now - lastMazeStep < MAZE_STEP_MS) return;
   AccelerometerData accel;
@@ -394,7 +483,8 @@ void updateMaze() {
   float x = fabsf(mazeTiltX);
   float y = fabsf(mazeTiltY);
   int dCol = x >= MAZE_TILT_THRESHOLD ? (mazeTiltX > 0 ? 1 : -1) : 0;
-  int dRow = y >= MAZE_TILT_THRESHOLD ? (mazeTiltY > 0 ? 1 : -1) : 0;
+  float rowThreshold = mazeTiltY > 0 ? MAZE_DOWN_TILT_THRESHOLD : MAZE_TILT_THRESHOLD;
+  int dRow = y >= rowThreshold ? (mazeTiltY > 0 ? 1 : -1) : 0;
   if (x >= y) {
     if (!dCol || !stepMaze(0, dCol)) {
       if (dRow) stepMaze(dRow, 0);
@@ -665,9 +755,9 @@ void handleTap(int x, int y) {
                y >= 347 && y <= 410) {
       startSpin();
     } else if (screen == GRID_MAZE) {
-      if (mazeWon) resetMaze();
-      else if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
-               y >= MAZE_Y && y < MAZE_Y + MAZE_SIZE * MAZE_CELL) {
+      if (mazeWon) return;
+      if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
+          y >= MAZE_Y && y < MAZE_Y + MAZE_SIZE * MAZE_CELL) {
         int tapCol = (x - MAZE_X) / MAZE_CELL;
         int tapRow = (y - MAZE_Y) / MAZE_CELL;
         int dCol = tapCol > mazeCol ? 1 : tapCol < mazeCol ? -1 : 0;

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Convert a locally supplied MP3 to an ESP32-ready PCM header.
+"""Convert the checked-in MP3 (or another clip) to an ESP32-ready PCM header.
 
 Install miniaudio first: python3 -m pip install miniaudio
-Usage: python3 tools/prepare_audio.py /path/to/clip.mp3
+Usage: python3 tools/prepare_audio.py [path/to/clip.mp3]
 """
 
 import argparse
@@ -13,9 +13,13 @@ import miniaudio
 
 
 def main() -> None:
+    default_mp3 = Path(__file__).resolve().parents[1] / "assets" / "tron-legacy.mp3"
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mp3", type=Path, help="the audio file to play on BOOT double tap")
+    parser.add_argument("mp3", nargs="?", type=Path, default=default_mp3,
+                        help="audio file for BOOT double tap (default: assets/tron-legacy.mp3)")
     args = parser.parse_args()
+    if not args.mp3.is_file():
+        parser.error(f"audio file not found: {args.mp3}")
 
     clip = miniaudio.decode_file(
         str(args.mp3),

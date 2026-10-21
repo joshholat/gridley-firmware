@@ -36,16 +36,18 @@ restarting, preventing an accidental entry into flashing mode.
 
 ## Add or replace the BOOT sound
 
-The user's MP3 is kept outside Git. To install or replace it locally:
+The supplied MP3 is committed as `assets/tron-legacy.mp3`. To prepare it for a
+fresh build:
 
 1. Install the converter dependency: `python3 -m pip install miniaudio`.
-2. Run `python3 tools/prepare_audio.py /path/to/your-clip.mp3`.
+2. Run `python3 tools/prepare_audio.py`.
 3. Compile and upload `WaveshareStarter/WaveshareStarter.ino`.
 
 The converter makes an ignored `WaveshareStarter/audio_clip.h` containing
 16 kHz stereo PCM audio. Clips must be 15 seconds or shorter. The sketch still
 builds without that generated file, but the double tap only logs that no sound
-is installed. The current board has the 3.32-second clip supplied by the user.
+is installed. To use a different clip, pass its path to the converter. The
+current board has the 3.32-second clip supplied by the user.
 
 ## Source and dependencies
 

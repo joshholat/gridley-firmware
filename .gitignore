@@ -1,3 +1,4 @@
 backups/*.bin
 backups/*.sha256
 build/
+WaveshareStarter/audio_clip.h

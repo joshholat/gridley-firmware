@@ -17,3 +17,11 @@
 #define IIC_SCL 14
 #define TP_INT 11
 #define TP_RST 2
+
+// ES8311 speaker codec and amplifier (Waveshare 1.75C wiring).
+#define AUDIO_MCLK 16
+#define AUDIO_BCLK 9
+#define AUDIO_DIN 10
+#define AUDIO_WS 45
+#define AUDIO_DOUT 8
+#define AUDIO_PA 46

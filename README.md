@@ -28,6 +28,25 @@ Wi-Fi details and the bar list are saved on the board, not in source control.
 When connected, hold the **BOOT** button for three seconds to clear the saved
 Wi-Fi details and show the setup network again.
 
+Double tap **BOOT** (two quick press-and-release actions, within about 450 ms)
+to play the locally installed sound through the built-in speaker. The sound is
+stored in the firmware, so playback works without Wi-Fi. A single tap has no
+action. The three-second Wi-Fi reset now waits until BOOT is released before
+restarting, preventing an accidental entry into flashing mode.
+
+## Add or replace the BOOT sound
+
+The user's MP3 is kept outside Git. To install or replace it locally:
+
+1. Install the converter dependency: `python3 -m pip install miniaudio`.
+2. Run `python3 tools/prepare_audio.py /path/to/your-clip.mp3`.
+3. Compile and upload `WaveshareStarter/WaveshareStarter.ino`.
+
+The converter makes an ignored `WaveshareStarter/audio_clip.h` containing
+16 kHz stereo PCM audio. Clips must be 15 seconds or shorter. The sketch still
+builds without that generated file, but the double tap only logs that no sound
+is installed. The current board has the 3.32-second clip supplied by the user.
+
 ## Source and dependencies
 
 - Sketch: WaveshareStarter/WaveshareStarter.ino
@@ -36,6 +55,9 @@ Wi-Fi details and show the setup network again.
 - Waveshare's bundled **GFX Library for Arduino 1.6.4** and
   **XPowersLib 0.2.6**
 - **SensorLib 0.5.1** for the CST9217 touch controller
+- ESP32 Arduino's built-in `ESP_I2S` library for audio output
+- `es8311.c`, `es8311.h`, and `es8311_reg.h` from Waveshare's 1.75C
+  `07_ES8311` example (Espressif Apache-2.0 licensed codec driver)
 
 The board pin map and display/PMIC initialization follow Waveshare's official
 examples at commit 4bfdc80eedbf95031e384610796bed15e0240312:

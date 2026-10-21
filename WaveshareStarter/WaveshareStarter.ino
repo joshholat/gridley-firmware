@@ -1,14 +1,23 @@
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
 #include <DNSServer.h>
+#include <ESP_I2S.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include "TouchDrvCST.hpp"
+#include "es8311.h"
 #include "esp_random.h"
 #include "pin_config.h"
 #include "XPowersLib.h"
+
+#if __has_include("audio_clip.h")
+#include "audio_clip.h"
+#define HAS_AUDIO_CLIP 1
+#else
+#define HAS_AUDIO_CLIP 0
+#endif
 
 // Gridley launcher for the Waveshare ESP32-S3-Touch-AMOLED-1.75C.
 // The existing Wi-Fi and battery settings remain in the "starter" namespace.
@@ -23,6 +32,7 @@ TouchDrvCST92xx touch;
 Preferences settings;
 WebServer web(80);
 DNSServer dns;
+I2SClass audioI2S;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
 enum AppScreen { LAUNCHER, NIGHT_SPINNER, STATUS_SETTINGS };
@@ -59,6 +69,8 @@ constexpr uint16_t GRID_DIM = 0x0297;
 bool displayReady = false;
 bool powerReady = false;
 bool touchReady = false;
+bool audioReady = false;
+bool audioPlaying = false;
 bool screenDirty = true;
 volatile bool touchPending = false;
 String apName;
@@ -68,9 +80,20 @@ String savedPassword;
 unsigned long connectStarted = 0;
 unsigned long restartAt = 0;
 unsigned long bootPressedAt = 0;
+unsigned long bootLastChangeAt = 0;
+unsigned long bootLastTapAt = 0;
+unsigned long audioPowerDownAt = 0;
 unsigned long lastDraw = 0;
 unsigned long lastLog = 0;
 unsigned long lastTap = 0;
+size_t audioOffset = 0;
+bool bootRawPressed = false;
+bool bootStablePressed = false;
+
+constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
+constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
+constexpr uint32_t BOOT_DOUBLE_TAP_MS = 450;
+constexpr uint32_t BOOT_LONG_PRESS_MS = 3000;
 
 int selectedBar = -1;
 int displayedBar = -1;
@@ -225,6 +248,9 @@ void drawLauncher() {
   textCentered("PICK A PROGRAM, USER", 129, 2, CYAN);
   button(84, 170, 298, 70, "CHICAGO SPINNER", CYAN);
   button(84, 262, 298, 70, "SETTINGS", PURPLE);
+#if HAS_AUDIO_CLIP
+  textCentered("BOOT x2: PLAY SOUND", 379, 1, MUTED);
+#endif
 }
 
 void drawSpinner() {
@@ -273,7 +299,115 @@ void drawSettings() {
     textCentered("Connecting to Wi-Fi", 281, 2, CYAN);
   }
   textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 389, 2, MUTED);
-  textCentered("Hold BOOT 3s: reset Wi-Fi", 417, 1, MUTED);
+#if HAS_AUDIO_CLIP
+  textCentered("BOOT x2: play sound", 410, 1, MUTED);
+#endif
+  textCentered("Hold BOOT 3s: reset Wi-Fi", 423, 1, MUTED);
+}
+
+bool initAudio() {
+  pinMode(AUDIO_PA, OUTPUT);
+  digitalWrite(AUDIO_PA, LOW);
+  audioI2S.setPins(AUDIO_BCLK, AUDIO_WS, AUDIO_DOUT, AUDIO_DIN, AUDIO_MCLK);
+  if (!audioI2S.begin(I2S_MODE_STD, AUDIO_SAMPLE_RATE,
+                      I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
+                      I2S_STD_SLOT_BOTH)) {
+    Serial.println("WARNING: I2S speaker bus did not initialize");
+    return false;
+  }
+
+  es8311_handle_t codec = es8311_create(0, ES8311_ADDRRES_0);
+  if (!codec) {
+    Serial.println("WARNING: ES8311 codec did not initialize");
+    return false;
+  }
+  es8311_clock_config_t clock = {};
+  clock.mclk_from_mclk_pin = true;
+  clock.mclk_frequency = AUDIO_SAMPLE_RATE * 256;
+  clock.sample_frequency = AUDIO_SAMPLE_RATE;
+  if (es8311_init(codec, &clock, ES8311_RESOLUTION_16,
+                  ES8311_RESOLUTION_16) != ESP_OK ||
+      es8311_sample_frequency_config(codec, clock.mclk_frequency,
+                                     clock.sample_frequency) != ESP_OK ||
+      es8311_microphone_config(codec, false) != ESP_OK ||
+      es8311_voice_volume_set(codec, 60, nullptr) != ESP_OK) {
+    Serial.println("WARNING: ES8311 speaker setup failed");
+    return false;
+  }
+  Serial.println("Speaker ready");
+  return true;
+}
+
+void playAudioClip() {
+#if HAS_AUDIO_CLIP
+  if (!audioReady) {
+    Serial.println("Speaker unavailable");
+    return;
+  }
+  audioOffset = 0;
+  audioPowerDownAt = 0;
+  audioPlaying = true;
+  digitalWrite(AUDIO_PA, HIGH);
+  Serial.println("BOOT double tap: playing sound");
+#else
+  Serial.println("BOOT double tap: run tools/prepare_audio.py to add a clip");
+#endif
+}
+
+void pumpAudio() {
+#if HAS_AUDIO_CLIP
+  if (audioPlaying) {
+    size_t remaining = AUDIO_CLIP_BYTES - audioOffset;
+    size_t count = min(remaining, static_cast<size_t>(2048));
+    audioOffset += audioI2S.write(AUDIO_CLIP_PCM + audioOffset, count);
+    if (audioOffset >= AUDIO_CLIP_BYTES) {
+      audioPlaying = false;
+      audioPowerDownAt = millis() + 150;
+      Serial.println("Sound finished");
+    }
+  }
+  if (audioPowerDownAt &&
+      static_cast<int32_t>(millis() - audioPowerDownAt) >= 0) {
+    digitalWrite(AUDIO_PA, LOW);
+    audioPowerDownAt = 0;
+  }
+#endif
+}
+
+void pollBootButton() {
+  unsigned long now = millis();
+  bool pressed = digitalRead(0) == LOW;
+  if (pressed != bootRawPressed) {
+    bootRawPressed = pressed;
+    bootLastChangeAt = now;
+  }
+  if (pressed == bootStablePressed || now - bootLastChangeAt < BOOT_DEBOUNCE_MS) {
+    return;
+  }
+  bootStablePressed = pressed;
+  if (pressed) {
+    bootPressedAt = now;
+    return;
+  }
+
+  unsigned long held = now - bootPressedAt;
+  if (held >= BOOT_LONG_PRESS_MS) {
+    bootLastTapAt = 0;
+    settings.remove("ssid");
+    settings.remove("password");
+    Serial.println("Wi-Fi settings cleared");
+    // Restart after release so GPIO0 cannot put the board into flashing mode.
+    ESP.restart();
+  } else if (held < 600) {
+    if (bootLastTapAt && now - bootLastTapAt <= BOOT_DOUBLE_TAP_MS) {
+      bootLastTapAt = 0;
+      playAudioClip();
+    } else {
+      bootLastTapAt = now;
+    }
+  } else {
+    bootLastTapAt = 0;
+  }
 }
 
 void drawScreen() {
@@ -466,6 +600,8 @@ void logStatus() {
     Serial.print(" | charging: ");
     Serial.print(power.isCharging() ? "yes" : "no");
   }
+  Serial.print(" | speaker: ");
+  Serial.print(audioReady ? "ready" : "unavailable");
   Serial.println();
 }
 
@@ -514,6 +650,8 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(TP_INT), onTouchInterrupt, FALLING);
   } else Serial.println("WARNING: Touch controller not found");
 
+  audioReady = initAudio();
+
   configureWeb();
   if (savedSsid.isEmpty()) startSetup();
   else startConnecting();
@@ -536,19 +674,12 @@ void loop() {
     startConnecting();
   }
 
-  if (digitalRead(0) == LOW) {
-    if (bootPressedAt == 0) bootPressedAt = millis();
-    if (millis() - bootPressedAt > 3000) {
-      settings.remove("ssid");
-      settings.remove("password");
-      Serial.println("Wi-Fi settings cleared");
-      ESP.restart();
-    }
-  } else bootPressedAt = 0;
+  pollBootButton();
 
   if (restartAt && static_cast<int32_t>(millis() - restartAt) >= 0) ESP.restart();
   pollTouch();
   updateSpin();
+  pumpAudio();
   if (screenDirty || (screen == STATUS_SETTINGS && millis() - lastDraw > 5000)) {
     drawScreen();
     screenDirty = false;

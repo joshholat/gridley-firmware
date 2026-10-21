@@ -4,7 +4,7 @@ This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
 The home screen is a bright blue perspective-grid app launcher with a large white
-**GRIDLEY** title, **Chicago Spinner**, and **Settings**. Its prompt is
+**GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, and **Settings**. Its prompt is
 "PICK A PROGRAM, USER."
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
 without repeating the immediately previous pick. Its starter list covers bars
@@ -18,6 +18,12 @@ phone or computer on the same Wi-Fi network: open the IP address shown in
 Settings. Enter up to 16 lines in `Name | Street address` format. Changes are
 saved on Gridley, and the new list is available immediately. Changing the area
 label alone does not discover bars; edit the list as well if changing areas.
+
+**Grid Maze** is a small fixed Tron-style maze. Tilt Gridley to move the glowing
+puck through the cyan corridors to the gold exit. The onboard QMI8658 motion
+sensor drives the puck; tapping the maze nudges it one square in the direction
+you tapped. When the exit is reached, tap the maze to replay. If the sensor is
+unavailable, touch control still works. The route is fixed in this first version.
 
 If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network
@@ -66,6 +72,7 @@ current board has the 3.32-second clip supplied by the user.
 - Waveshare's bundled **GFX Library for Arduino 1.6.4** and
   **XPowersLib 0.2.6**
 - **SensorLib 0.5.1** for the CST9217 touch controller
+- The same SensorLib installation drives the QMI8658 tilt sensor
 - ESP32 Arduino's built-in `ESP_I2S` library for audio output
 - `es8311.c`, `es8311.h`, and `es8311_reg.h` from Waveshare's 1.75C
   `07_ES8311` example (Espressif Apache-2.0 licensed codec driver)

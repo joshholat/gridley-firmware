@@ -2,10 +2,12 @@
 #include <Arduino_GFX_Library.h>
 #include <DNSServer.h>
 #include <ESP_I2S.h>
+#include <math.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <ImuDrv.hpp>
 #include "TouchDrvCST.hpp"
 #include "es8311.h"
 #include "esp_ota_ops.h"
@@ -30,6 +32,7 @@ Arduino_CO5300 *gfx = new Arduino_CO5300(
 
 XPowersPMU power;
 TouchDrvCST92xx touch;
+SensorQMI8658 imu;
 Preferences settings;
 WebServer web(80);
 DNSServer dns;
@@ -37,7 +40,7 @@ I2SClass audioI2S;
 es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
-enum AppScreen { LAUNCHER, NIGHT_SPINNER, STATUS_SETTINGS };
+enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, STATUS_SETTINGS };
 NetworkMode networkMode = CONNECTING;
 AppScreen screen = LAUNCHER;
 
@@ -67,6 +70,27 @@ constexpr uint16_t PANEL = 0x10A2;
 constexpr uint16_t GRID_BRIGHT = 0x07FF;
 constexpr uint16_t GRID_MID = 0x04DF;
 constexpr uint16_t GRID_DIM = 0x0297;
+constexpr uint16_t MAZE_FLOOR = 0x000C;
+constexpr uint16_t MAZE_WALL = 0x0824;
+constexpr uint16_t MAZE_GRID = 0x19B0;
+constexpr uint16_t MAZE_GOLD = 0xFEA0;
+constexpr int MAZE_SIZE = 9;
+constexpr int MAZE_CELL = 28;
+constexpr int MAZE_X = 107;
+constexpr int MAZE_Y = 143;
+constexpr uint32_t MAZE_STEP_MS = 170;
+constexpr float MAZE_TILT_THRESHOLD = 0.17f;
+const char *const MAZE_ROWS[MAZE_SIZE] = {
+    "#########",
+    "#S..#...#",
+    "###.#.#.#",
+    "#...#.#.#",
+    "#.###.#.#",
+    "#.....#.#",
+    "#.#####.#",
+    "#......G#",
+    "#########",
+};
 constexpr int VOLUME_TRACK_X = 139;
 constexpr int VOLUME_TRACK_WIDTH = 188;
 constexpr int VOLUME_BUTTON_Y = 348;
@@ -77,6 +101,7 @@ constexpr int VOLUME_PLUS_X = 340;
 bool displayReady = false;
 bool powerReady = false;
 bool touchReady = false;
+bool imuReady = false;
 bool audioReady = false;
 bool audioPlaying = false;
 bool screenDirty = true;
@@ -99,6 +124,12 @@ unsigned long lastTap = 0;
 size_t audioOffset = 0;
 bool bootRawPressed = false;
 bool bootStablePressed = false;
+int mazeRow = 1;
+int mazeCol = 1;
+bool mazeWon = false;
+float mazeTiltX = 0;
+float mazeTiltY = 0;
+unsigned long lastMazeStep = 0;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -258,15 +289,120 @@ String powerStatusText() {
 
 void drawLauncher() {
   chrome("", false, true);
-  gfx->fillRoundRect(151, 65, 164, 48, 12, BG);
-  headlineCentered("GRIDLEY", 77);
-  gfx->fillRoundRect(91, 116, 284, 42, 12, BG);
-  textCentered("PICK A PROGRAM, USER", 129, 2, CYAN);
-  button(84, 170, 298, 70, "CHICAGO SPINNER", CYAN);
-  button(84, 262, 298, 70, "SETTINGS", PURPLE);
+  gfx->fillRoundRect(151, 51, 164, 46, 12, BG);
+  headlineCentered("GRIDLEY", 63);
+  gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
+  textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
+  button(84, 145, 298, 64, "CHICAGO SPINNER", CYAN);
+  button(84, 224, 298, 64, "GRID MAZE", MAZE_GOLD);
+  button(84, 303, 298, 64, "SETTINGS", PURPLE);
 #if HAS_AUDIO_CLIP
-  textCentered("BOOT x2: PLAY SOUND", 379, 1, MUTED);
+  textCentered("BOOT x2: PLAY SOUND", 385, 1, MUTED);
 #endif
+}
+
+bool mazeWall(int row, int col) {
+  return row < 0 || row >= MAZE_SIZE || col < 0 || col >= MAZE_SIZE ||
+         MAZE_ROWS[row][col] == '#';
+}
+
+void drawMazeCell(int row, int col) {
+  int x = MAZE_X + col * MAZE_CELL;
+  int y = MAZE_Y + row * MAZE_CELL;
+  bool wall = mazeWall(row, col);
+  gfx->fillRect(x, y, MAZE_CELL, MAZE_CELL, wall ? MAZE_WALL : MAZE_FLOOR);
+  gfx->drawRect(x, y, MAZE_CELL, MAZE_CELL, MAZE_GRID);
+  if (wall) return;
+
+  // Bright edges face the playable route; the dim tiles make a Tron grid.
+  if (mazeWall(row - 1, col)) gfx->fillRect(x, y, MAZE_CELL, 3, CYAN);
+  if (mazeWall(row + 1, col)) gfx->fillRect(x, y + MAZE_CELL - 3, MAZE_CELL, 3, CYAN);
+  if (mazeWall(row, col - 1)) gfx->fillRect(x, y, 3, MAZE_CELL, CYAN);
+  if (mazeWall(row, col + 1)) gfx->fillRect(x + MAZE_CELL - 3, y, 3, MAZE_CELL, CYAN);
+  if (MAZE_ROWS[row][col] == 'G') {
+    gfx->drawCircle(x + 14, y + 14, 10, WHITE);
+    gfx->fillCircle(x + 14, y + 14, 7, MAZE_GOLD);
+  } else if (MAZE_ROWS[row][col] == 'S') {
+    gfx->drawCircle(x + 14, y + 14, 9, BLUE);
+  }
+}
+
+void drawMazePlayer() {
+  int x = MAZE_X + mazeCol * MAZE_CELL + MAZE_CELL / 2;
+  int y = MAZE_Y + mazeRow * MAZE_CELL + MAZE_CELL / 2;
+  gfx->fillCircle(x, y, 10, CYAN);
+  gfx->fillCircle(x, y, 6, WHITE);
+}
+
+void drawMazeStatus() {
+  gfx->fillRect(104, 407, 258, 23, BG);
+  if (mazeWon) textCentered("GRID CLEARED! TAP TO REPLAY", 412, 1, MAZE_GOLD);
+  else if (imuReady) textCentered("TILT TO MOVE  /  TAP TO NUDGE", 412, 1, MUTED);
+  else textCentered("SENSOR OFFLINE  /  TAP TO MOVE", 412, 1, MAZE_GOLD);
+}
+
+void drawMaze() {
+  chrome("GRID MAZE");
+  textCentered("REACH THE GOLD EXIT", 121, 1, MUTED);
+  for (int row = 0; row < MAZE_SIZE; ++row) {
+    for (int col = 0; col < MAZE_SIZE; ++col) drawMazeCell(row, col);
+  }
+  gfx->drawRect(MAZE_X - 2, MAZE_Y - 2,
+                MAZE_SIZE * MAZE_CELL + 4, MAZE_SIZE * MAZE_CELL + 4, CYAN);
+  drawMazePlayer();
+  drawMazeStatus();
+}
+
+void resetMaze() {
+  mazeRow = 1;
+  mazeCol = 1;
+  mazeWon = false;
+  mazeTiltX = mazeTiltY = 0;
+  lastMazeStep = 0;
+  screenDirty = true;
+}
+
+bool stepMaze(int dRow, int dCol) {
+  int nextRow = mazeRow + dRow;
+  int nextCol = mazeCol + dCol;
+  if (mazeWon || mazeWall(nextRow, nextCol)) return false;
+  int oldRow = mazeRow;
+  int oldCol = mazeCol;
+  mazeRow = nextRow;
+  mazeCol = nextCol;
+  mazeWon = MAZE_ROWS[mazeRow][mazeCol] == 'G';
+  drawMazeCell(oldRow, oldCol);
+  drawMazeCell(mazeRow, mazeCol);
+  drawMazePlayer();
+  if (mazeWon) {
+    Serial.println("Grid Maze cleared");
+    drawMazeStatus();
+  }
+  return true;
+}
+
+void updateMaze() {
+  if (screen != GRID_MAZE || !imuReady || mazeWon || !displayReady) return;
+  unsigned long now = millis();
+  if (now - lastMazeStep < MAZE_STEP_MS) return;
+  AccelerometerData accel;
+  if (!imu.readAccel(accel)) return;
+  mazeTiltX = 0.55f * mazeTiltX - 0.45f * accel.mps2.x / 9.80665f;
+  mazeTiltY = 0.55f * mazeTiltY - 0.45f * accel.mps2.y / 9.80665f;
+  float x = fabsf(mazeTiltX);
+  float y = fabsf(mazeTiltY);
+  int dCol = x >= MAZE_TILT_THRESHOLD ? (mazeTiltX > 0 ? 1 : -1) : 0;
+  int dRow = y >= MAZE_TILT_THRESHOLD ? (mazeTiltY > 0 ? 1 : -1) : 0;
+  if (x >= y) {
+    if (!dCol || !stepMaze(0, dCol)) {
+      if (dRow) stepMaze(dRow, 0);
+    }
+  } else {
+    if (!dRow || !stepMaze(dRow, 0)) {
+      if (dCol) stepMaze(0, dCol);
+    }
+  }
+  lastMazeStep = now;
 }
 
 void drawSpinner() {
@@ -474,6 +610,7 @@ void drawScreen() {
   switch (screen) {
     case LAUNCHER: drawLauncher(); break;
     case NIGHT_SPINNER: drawSpinner(); break;
+    case GRID_MAZE: drawMaze(); break;
     case STATUS_SETTINGS: drawSettings(); break;
   }
 }
@@ -510,8 +647,11 @@ void updateSpin() {
 
 void handleTap(int x, int y) {
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 170 && y <= 240) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 262 && y <= 332) {
+    if (x >= 84 && x <= 382 && y >= 145 && y <= 209) screen = NIGHT_SPINNER;
+    else if (x >= 84 && x <= 382 && y >= 224 && y <= 288) {
+      resetMaze();
+      screen = GRID_MAZE;
+    } else if (x >= 84 && x <= 382 && y >= 303 && y <= 367) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
       screen = STATUS_SETTINGS;
@@ -522,6 +662,22 @@ void handleTap(int x, int y) {
     } else if (screen == NIGHT_SPINNER && x >= 95 && x <= 371 &&
                y >= 347 && y <= 410) {
       startSpin();
+    } else if (screen == GRID_MAZE) {
+      if (mazeWon) resetMaze();
+      else if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
+               y >= MAZE_Y && y < MAZE_Y + MAZE_SIZE * MAZE_CELL) {
+        int tapCol = (x - MAZE_X) / MAZE_CELL;
+        int tapRow = (y - MAZE_Y) / MAZE_CELL;
+        int dCol = tapCol > mazeCol ? 1 : tapCol < mazeCol ? -1 : 0;
+        int dRow = tapRow > mazeRow ? 1 : tapRow < mazeRow ? -1 : 0;
+        if (abs(tapCol - mazeCol) >= abs(tapRow - mazeRow)) {
+          if (!dCol || !stepMaze(0, dCol)) {
+            if (dRow) stepMaze(dRow, 0);
+          }
+        } else if (!dRow || !stepMaze(dRow, 0)) {
+          if (dCol) stepMaze(0, dCol);
+        }
+      }
     } else if (screen == STATUS_SETTINGS && y >= 343 && y <= 394) {
       if (x >= VOLUME_MINUS_X && x < VOLUME_MINUS_X + VOLUME_BUTTON_SIZE) {
         setAudioVolume(audioVolume > 5 ? audioVolume - 5 : 0);
@@ -726,6 +882,15 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(TP_INT), onTouchInterrupt, FALLING);
   } else Serial.println("WARNING: Touch controller not found");
 
+  imuReady = imu.begin(Wire, QMI8658_L_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
+  if (!imuReady) imuReady = imu.begin(Wire, QMI8658_H_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
+  if (imuReady) {
+    imuReady = imu.setAccelFullScaleRange(AccelFullScaleRange::FS_2G) &&
+               imu.setAccelOutputDataRate(56.0f) && imu.enableAccel();
+    Serial.println(imuReady ? "Grid Maze tilt sensor ready" :
+                   "WARNING: Grid Maze tilt sensor setup failed");
+  } else Serial.println("WARNING: Grid Maze tilt sensor not found");
+
   audioReady = initAudio();
 
   configureWeb();
@@ -760,6 +925,7 @@ void loop() {
     drawScreen();
     screenDirty = false;
   }
+  updateMaze();
   if (millis() - lastLog > 5000) {
     logStatus();
     lastLog = millis();

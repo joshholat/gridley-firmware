@@ -34,6 +34,11 @@ stored in the firmware, so playback works without Wi-Fi. A single tap has no
 action. The three-second Wi-Fi reset now waits until BOOT is released before
 restarting, preventing an accidental entry into flashing mode.
 
+In **Settings**, tap the volume bar to choose a level from 0 to 100, or use the
+**−** and **+** buttons to change it by 10. Changes take effect immediately and
+are saved on the board for the next power-on. The status information and volume
+control fit on one screen without scrolling.
+
 ## Add or replace the BOOT sound
 
 The supplied MP3 is committed as `assets/tron-legacy.mp3`. To prepare it for a

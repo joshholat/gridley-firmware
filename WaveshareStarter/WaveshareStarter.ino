@@ -33,6 +33,7 @@ Preferences settings;
 WebServer web(80);
 DNSServer dns;
 I2SClass audioI2S;
+es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
 enum AppScreen { LAUNCHER, NIGHT_SPINNER, STATUS_SETTINGS };
@@ -65,6 +66,12 @@ constexpr uint16_t PANEL = 0x10A2;
 constexpr uint16_t GRID_BRIGHT = 0x07FF;
 constexpr uint16_t GRID_MID = 0x04DF;
 constexpr uint16_t GRID_DIM = 0x0297;
+constexpr int VOLUME_TRACK_X = 139;
+constexpr int VOLUME_TRACK_WIDTH = 188;
+constexpr int VOLUME_BUTTON_Y = 348;
+constexpr int VOLUME_BUTTON_SIZE = 43;
+constexpr int VOLUME_MINUS_X = 83;
+constexpr int VOLUME_PLUS_X = 340;
 
 bool displayReady = false;
 bool powerReady = false;
@@ -72,6 +79,7 @@ bool touchReady = false;
 bool audioReady = false;
 bool audioPlaying = false;
 bool screenDirty = true;
+uint8_t audioVolume = 60;
 volatile bool touchPending = false;
 String apName;
 String apPassword;
@@ -280,29 +288,47 @@ void drawSpinner() {
 
 void drawSettings() {
   chrome("SETTINGS");
-  textCentered("GRIDLEY STATUS", 138, 2, CYAN);
-  textCentered(batteryText(), 173, 2, WHITE);
+  textCentered(batteryText(), 145, 2, WHITE);
   if (powerReady) {
-    textCentered(power.isVbusIn() ? "USB power: yes" : "USB power: no", 202, 2, MUTED);
-    textCentered(power.isCharging() ? "Charging: yes" : "Charging: no", 231, 2, MUTED);
+    String powerText = String("USB: ") + (power.isVbusIn() ? "yes" : "no") +
+                       "   CHARGING: " + (power.isCharging() ? "yes" : "no");
+    textCentered(powerText, 173, 2, MUTED);
   }
   if (networkMode == CONNECTED) {
-    textCentered("Wi-Fi connected", 271, 2, CYAN);
-    textCentered(WiFi.localIP().toString(), 300, 2, WHITE);
-    textCentered("Edit bars: open IP on phone", 335, 2, MUTED);
+    textCentered("Wi-Fi connected", 209, 2, CYAN);
+    textCentered(WiFi.localIP().toString(), 238, 2, WHITE);
+    textCentered("Edit bars: open IP on phone", 265, 1, MUTED);
   } else if (networkMode == SETUP) {
-    textCentered("Wi-Fi setup network", 271, 2, CYAN);
-    textCentered(apName, 300, 2, WHITE);
-    textCentered(apPassword, 328, 2, WHITE);
-    textCentered("Open 192.168.4.1", 356, 2, MUTED);
+    textCentered("Wi-Fi setup network", 207, 2, CYAN);
+    textCentered(apName, 232, 2, WHITE);
+    textCentered(apPassword, 257, 2, WHITE);
+    textCentered("Open 192.168.4.1", 282, 1, MUTED);
   } else {
-    textCentered("Connecting to Wi-Fi", 281, 2, CYAN);
+    textCentered("Connecting to Wi-Fi", 220, 2, CYAN);
   }
-  textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 389, 2, MUTED);
+  textCentered("Area: " + areaLabel + "  /  " + String(barCount) + " bars", 304, 1, MUTED);
+  textCentered("VOLUME " + String(audioVolume) + "%", 322, 2, WHITE);
+
+  gfx->fillRoundRect(VOLUME_MINUS_X, VOLUME_BUTTON_Y,
+                     VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, PANEL);
+  gfx->drawRoundRect(VOLUME_MINUS_X, VOLUME_BUTTON_Y,
+                     VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, CYAN);
+  gfx->fillRect(VOLUME_MINUS_X + 12, VOLUME_BUTTON_Y + 20, 19, 3, WHITE);
+  gfx->fillRoundRect(VOLUME_PLUS_X, VOLUME_BUTTON_Y,
+                     VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, PANEL);
+  gfx->drawRoundRect(VOLUME_PLUS_X, VOLUME_BUTTON_Y,
+                     VOLUME_BUTTON_SIZE, VOLUME_BUTTON_SIZE, 12, CYAN);
+  gfx->fillRect(VOLUME_PLUS_X + 12, VOLUME_BUTTON_Y + 20, 19, 3, WHITE);
+  gfx->fillRect(VOLUME_PLUS_X + 20, VOLUME_BUTTON_Y + 12, 3, 19, WHITE);
+
+  int filled = VOLUME_TRACK_WIDTH * audioVolume / 100;
+  gfx->fillRoundRect(VOLUME_TRACK_X, 364, VOLUME_TRACK_WIDTH, 12, 6, PANEL);
+  if (filled > 0) gfx->fillRoundRect(VOLUME_TRACK_X, 364, filled, 12, 6, CYAN);
+  gfx->fillCircle(VOLUME_TRACK_X + filled, 370, 14, WHITE);
 #if HAS_AUDIO_CLIP
-  textCentered("BOOT x2: play sound", 410, 1, MUTED);
+  textCentered("BOOT x2: play sound", 405, 1, MUTED);
 #endif
-  textCentered("Hold BOOT 3s: reset Wi-Fi", 423, 1, MUTED);
+  textCentered("Hold BOOT 3s: reset Wi-Fi", 419, 1, MUTED);
 }
 
 bool initAudio() {
@@ -316,26 +342,42 @@ bool initAudio() {
     return false;
   }
 
-  es8311_handle_t codec = es8311_create(0, ES8311_ADDRRES_0);
-  if (!codec) {
+  audioCodec = es8311_create(0, ES8311_ADDRRES_0);
+  if (!audioCodec) {
     Serial.println("WARNING: ES8311 codec did not initialize");
+    audioI2S.end();
     return false;
   }
   es8311_clock_config_t clock = {};
   clock.mclk_from_mclk_pin = true;
   clock.mclk_frequency = AUDIO_SAMPLE_RATE * 256;
   clock.sample_frequency = AUDIO_SAMPLE_RATE;
-  if (es8311_init(codec, &clock, ES8311_RESOLUTION_16,
+  if (es8311_init(audioCodec, &clock, ES8311_RESOLUTION_16,
                   ES8311_RESOLUTION_16) != ESP_OK ||
-      es8311_sample_frequency_config(codec, clock.mclk_frequency,
+      es8311_sample_frequency_config(audioCodec, clock.mclk_frequency,
                                      clock.sample_frequency) != ESP_OK ||
-      es8311_microphone_config(codec, false) != ESP_OK ||
-      es8311_voice_volume_set(codec, 60, nullptr) != ESP_OK) {
+      es8311_microphone_config(audioCodec, false) != ESP_OK ||
+      es8311_voice_volume_set(audioCodec, audioVolume, nullptr) != ESP_OK) {
     Serial.println("WARNING: ES8311 speaker setup failed");
+    es8311_delete(audioCodec);
+    audioCodec = nullptr;
+    audioI2S.end();
     return false;
   }
   Serial.println("Speaker ready");
   return true;
+}
+
+void setAudioVolume(uint8_t value) {
+  if (value == audioVolume) return;
+  audioVolume = value;
+  settings.putUChar("volume", audioVolume);
+  if (audioReady && audioCodec &&
+      es8311_voice_volume_set(audioCodec, audioVolume, nullptr) != ESP_OK) {
+    Serial.println("WARNING: Could not update speaker volume");
+  }
+  Serial.printf("Speaker volume: %u%%\n", audioVolume);
+  screenDirty = true;
 }
 
 void playAudioClip() {
@@ -459,6 +501,15 @@ void handleTap(int x, int y) {
     } else if (screen == NIGHT_SPINNER && x >= 95 && x <= 371 &&
                y >= 347 && y <= 410) {
       startSpin();
+    } else if (screen == STATUS_SETTINGS && y >= 343 && y <= 394) {
+      if (x >= VOLUME_MINUS_X && x < VOLUME_MINUS_X + VOLUME_BUTTON_SIZE) {
+        setAudioVolume(audioVolume > 10 ? audioVolume - 10 : 0);
+      } else if (x >= VOLUME_PLUS_X && x < VOLUME_PLUS_X + VOLUME_BUTTON_SIZE) {
+        setAudioVolume(min(100, static_cast<int>(audioVolume) + 10));
+      } else if (x >= VOLUME_TRACK_X && x <= VOLUME_TRACK_X + VOLUME_TRACK_WIDTH) {
+        int raw = (x - VOLUME_TRACK_X) * 100 / VOLUME_TRACK_WIDTH;
+        setAudioVolume(min(100, ((raw + 2) / 5) * 5));
+      }
     }
   }
   screenDirty = true;
@@ -621,6 +672,8 @@ void setup() {
   apPassword = settings.getString("apkey", "");
   savedSsid = settings.getString("ssid", "");
   savedPassword = settings.getString("password", "");
+  audioVolume = settings.getUChar("volume", 60);
+  if (audioVolume > 100) audioVolume = 100;
   areaLabel = settings.getString("area", "60612");
   if (!loadBars(settings.getString("bars", DEFAULT_BARS))) {
     loadBars(DEFAULT_BARS);

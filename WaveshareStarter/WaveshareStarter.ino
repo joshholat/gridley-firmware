@@ -387,8 +387,9 @@ void updateMaze() {
   if (now - lastMazeStep < MAZE_STEP_MS) return;
   AccelerometerData accel;
   if (!imu.readAccel(accel)) return;
-  mazeTiltX = 0.55f * mazeTiltX - 0.45f * accel.mps2.x / 9.80665f;
-  mazeTiltY = 0.55f * mazeTiltY - 0.45f * accel.mps2.y / 9.80665f;
+  // The IMU is rotated relative to the display: its Y axis runs left/right.
+  mazeTiltX = 0.55f * mazeTiltX - 0.45f * accel.mps2.y / 9.80665f;
+  mazeTiltY = 0.55f * mazeTiltY - 0.45f * accel.mps2.x / 9.80665f;
   float x = fabsf(mazeTiltX);
   float y = fabsf(mazeTiltY);
   int dCol = x >= MAZE_TILT_THRESHOLD ? (mazeTiltX > 0 ? 1 : -1) : 0;

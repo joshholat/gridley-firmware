@@ -52,9 +52,9 @@ constexpr uint16_t PURPLE = 0xA81F;
 constexpr uint16_t WHITE = 0xFFFF;
 constexpr uint16_t MUTED = 0x9CD3;
 constexpr uint16_t PANEL = 0x10A2;
-constexpr uint16_t GRID_BRIGHT = 0x04BF;
-constexpr uint16_t GRID_MID = 0x0294;
-constexpr uint16_t GRID_DIM = 0x014A;
+constexpr uint16_t GRID_BRIGHT = 0x07FF;
+constexpr uint16_t GRID_MID = 0x04DF;
+constexpr uint16_t GRID_DIM = 0x0297;
 
 bool displayReady = false;
 bool powerReady = false;
@@ -153,6 +153,16 @@ void textCentered(const String &value, int y, uint8_t size = 2,
   gfx->print(value);
 }
 
+void headlineCentered(const String &value, int y) {
+  gfx->setTextColor(WHITE);
+  gfx->setTextSize(3);
+  int x = (LCD_WIDTH - static_cast<int>(value.length()) * 18) / 2;
+  gfx->setCursor(x, y);
+  gfx->print(value);
+  gfx->setCursor(x + 1, y);
+  gfx->print(value);
+}
+
 void button(int x, int y, int w, int h, const String &label,
             uint16_t color = CYAN) {
   gfx->fillRoundRect(x, y, w, h, 18, PANEL);
@@ -166,38 +176,39 @@ void button(int x, int y, int w, int h, const String &label,
 }
 
 void drawPerspectiveGrid() {
-  // Two receding planes leave a black corridor behind the menu buttons.
-  // Lines are drawn directly, so the grid needs no bitmap or extra flash.
-  const int topRows[] = {10, 29, 47, 64, 79, 93, 105, 116, 126, 134, 141, 147};
-  const int bottomRows[] = {456, 437, 419, 402, 387, 373, 361, 350, 340, 332, 325, 319};
+  // Thick, bright lines remain visible on the small round AMOLED.
+  // The upper and lower planes recede into the dark menu corridor.
+  const int topRows[] = {18, 37, 55, 72, 88, 104, 118, 130, 140, 149, 157, 164};
+  const int bottomRows[] = {448, 429, 411, 394, 378, 362, 348, 336, 326, 317, 309, 302};
   for (int i = 0; i < 12; ++i) {
-    uint16_t color = i < 3 ? GRID_BRIGHT : i < 7 ? GRID_MID : GRID_DIM;
-    gfx->drawFastHLine(0, topRows[i], LCD_WIDTH, color);
-    gfx->drawFastHLine(0, bottomRows[i], LCD_WIDTH, color);
+    uint16_t color = i < 5 ? GRID_BRIGHT : i < 9 ? GRID_MID : GRID_DIM;
+    gfx->fillRect(0, topRows[i], LCD_WIDTH, 2, color);
+    gfx->fillRect(0, bottomRows[i], LCD_WIDTH, 2, color);
   }
-  for (int x = 0; x < LCD_WIDTH; x += 51) {
-    int vanishingX = 233 + (x - 233) / 20;
-    int topMidX = x + (vanishingX - x) * 110 / 155;
-    int bottomMidX = x + (vanishingX - x) * 100 / 154;
-    gfx->drawLine(x, 0, topMidX, 110, GRID_MID);
-    gfx->drawLine(topMidX, 110, vanishingX, 155, GRID_DIM);
-    gfx->drawLine(x, 465, bottomMidX, 365, GRID_MID);
-    gfx->drawLine(bottomMidX, 365, vanishingX, 311, GRID_DIM);
+  for (int x = 0; x < LCD_WIDTH; x += 42) {
+    int vanishingX = 233 + (x - 233) / 16;
+    int topMidX = x + (vanishingX - x) * 112 / 168;
+    int bottomMidX = x + (vanishingX - x) * 112 / 167;
+    gfx->drawLine(x, 0, topMidX, 112, GRID_BRIGHT);
+    gfx->drawLine(x + 1, 0, topMidX + 1, 112, GRID_BRIGHT);
+    gfx->drawLine(topMidX, 112, vanishingX, 168, GRID_MID);
+    gfx->drawLine(topMidX + 1, 112, vanishingX + 1, 168, GRID_MID);
+    gfx->drawLine(x, 465, bottomMidX, 353, GRID_BRIGHT);
+    gfx->drawLine(x + 1, 465, bottomMidX + 1, 353, GRID_BRIGHT);
+    gfx->drawLine(bottomMidX, 353, vanishingX, 298, GRID_MID);
+    gfx->drawLine(bottomMidX + 1, 353, vanishingX + 1, 298, GRID_MID);
   }
 }
 
 void chrome(const String &title, bool showBack = true, bool grid = false) {
   gfx->fillScreen(BG);
-  if (grid) {
-    drawPerspectiveGrid();
-    gfx->fillRoundRect(172, 74, 122, 40, 10, BG);
-  }
+  if (grid) drawPerspectiveGrid();
   gfx->drawCircle(233, 233, 224, BLUE);
   gfx->drawCircle(233, 233, 218, PANEL);
   if (showBack) {
     button(91, 91, 93, 45, "< BACK", BLUE);
   }
-  textCentered(title, showBack ? 65 : 88, 2, CYAN);
+  if (!title.isEmpty()) textCentered(title, showBack ? 65 : 88, 2, CYAN);
 }
 
 String batteryText() {
@@ -207,9 +218,11 @@ String batteryText() {
 }
 
 void drawLauncher() {
-  chrome("GRIDLEY", false, true);
-  gfx->fillRoundRect(91, 115, 284, 39, 12, BG);
-  textCentered("PICK A PROGRAM, USER", 124, 2, CYAN);
+  chrome("", false, true);
+  gfx->fillRoundRect(151, 65, 164, 48, 12, BG);
+  headlineCentered("GRIDLEY", 77);
+  gfx->fillRoundRect(91, 116, 284, 42, 12, BG);
+  textCentered("PICK A PROGRAM, USER", 129, 2, CYAN);
   button(84, 170, 298, 70, "CHICAGO SPINNER", CYAN);
   button(84, 262, 298, 70, "SETTINGS", PURPLE);
 }

@@ -3,7 +3,8 @@
 This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
-The home screen is an app launcher with **Chicago Spinner** and **Settings**.
+The home screen is a blue perspective-grid app launcher with **Chicago Spinner**
+and **Settings**. Its prompt is "PICK A PROGRAM, USER."
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
 without repeating the immediately previous pick. Its starter list covers bars
 around Chicago 60612. It does not check live hours or automatically search for

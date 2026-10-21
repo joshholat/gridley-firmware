@@ -52,6 +52,9 @@ constexpr uint16_t PURPLE = 0xA81F;
 constexpr uint16_t WHITE = 0xFFFF;
 constexpr uint16_t MUTED = 0x9CD3;
 constexpr uint16_t PANEL = 0x10A2;
+constexpr uint16_t GRID_BRIGHT = 0x04BF;
+constexpr uint16_t GRID_MID = 0x0294;
+constexpr uint16_t GRID_DIM = 0x014A;
 
 bool displayReady = false;
 bool powerReady = false;
@@ -162,8 +165,33 @@ void button(int x, int y, int w, int h, const String &label,
   gfx->print(label);
 }
 
-void chrome(const String &title, bool showBack = true) {
+void drawPerspectiveGrid() {
+  // Two receding planes leave a black corridor behind the menu buttons.
+  // Lines are drawn directly, so the grid needs no bitmap or extra flash.
+  const int topRows[] = {10, 29, 47, 64, 79, 93, 105, 116, 126, 134, 141, 147};
+  const int bottomRows[] = {456, 437, 419, 402, 387, 373, 361, 350, 340, 332, 325, 319};
+  for (int i = 0; i < 12; ++i) {
+    uint16_t color = i < 3 ? GRID_BRIGHT : i < 7 ? GRID_MID : GRID_DIM;
+    gfx->drawFastHLine(0, topRows[i], LCD_WIDTH, color);
+    gfx->drawFastHLine(0, bottomRows[i], LCD_WIDTH, color);
+  }
+  for (int x = 0; x < LCD_WIDTH; x += 51) {
+    int vanishingX = 233 + (x - 233) / 20;
+    int topMidX = x + (vanishingX - x) * 110 / 155;
+    int bottomMidX = x + (vanishingX - x) * 100 / 154;
+    gfx->drawLine(x, 0, topMidX, 110, GRID_MID);
+    gfx->drawLine(topMidX, 110, vanishingX, 155, GRID_DIM);
+    gfx->drawLine(x, 465, bottomMidX, 365, GRID_MID);
+    gfx->drawLine(bottomMidX, 365, vanishingX, 311, GRID_DIM);
+  }
+}
+
+void chrome(const String &title, bool showBack = true, bool grid = false) {
   gfx->fillScreen(BG);
+  if (grid) {
+    drawPerspectiveGrid();
+    gfx->fillRoundRect(172, 74, 122, 40, 10, BG);
+  }
   gfx->drawCircle(233, 233, 224, BLUE);
   gfx->drawCircle(233, 233, 218, PANEL);
   if (showBack) {
@@ -179,8 +207,9 @@ String batteryText() {
 }
 
 void drawLauncher() {
-  chrome("GRIDLEY / APPS", false);
-  textCentered("Choose your program", 124, 2, MUTED);
+  chrome("GRIDLEY", false, true);
+  gfx->fillRoundRect(91, 115, 284, 39, 12, BG);
+  textCentered("PICK A PROGRAM, USER", 124, 2, CYAN);
   button(84, 170, 298, 70, "CHICAGO SPINNER", CYAN);
   button(84, 262, 298, 70, "SETTINGS", PURPLE);
 }

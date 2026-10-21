@@ -10,7 +10,7 @@
 #include "pin_config.h"
 #include "XPowersLib.h"
 
-// Puck launcher for the Waveshare ESP32-S3-Touch-AMOLED-1.75C.
+// Gridley launcher for the Waveshare ESP32-S3-Touch-AMOLED-1.75C.
 // The existing Wi-Fi and battery settings remain in the "starter" namespace.
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
@@ -179,11 +179,10 @@ String batteryText() {
 }
 
 void drawLauncher() {
-  chrome("PUCK / APPS", false);
+  chrome("GRIDLEY / APPS", false);
   textCentered("Choose your program", 124, 2, MUTED);
   button(84, 170, 298, 70, "CHICAGO SPINNER", CYAN);
   button(84, 262, 298, 70, "SETTINGS", PURPLE);
-  textCentered("More apps can live here", 374, 2, MUTED);
 }
 
 void drawSpinner() {
@@ -213,7 +212,7 @@ void drawSpinner() {
 
 void drawSettings() {
   chrome("SETTINGS");
-  textCentered("PUCK STATUS", 138, 2, CYAN);
+  textCentered("GRIDLEY STATUS", 138, 2, CYAN);
   textCentered(batteryText(), 173, 2, WHITE);
   if (powerReady) {
     textCentered(power.isVbusIn() ? "USB power: yes" : "USB power: no", 202, 2, MUTED);
@@ -308,10 +307,10 @@ void sendWifiSetupPage() {
   web.sendHeader("Cache-Control", "no-store");
   web.send(200, "text/html",
            "<!doctype html><html><meta name='viewport' content='width=device-width,initial-scale=1'>"
-           "<title>Puck Wi-Fi setup</title><style>body{font:18px system-ui;max-width:32rem;"
+           "<title>Gridley Wi-Fi setup</title><style>body{font:18px system-ui;max-width:32rem;"
            "margin:3rem auto;padding:0 1rem}label{display:block;margin:1rem 0}"
            "input{display:block;font:inherit;width:100%;padding:.6rem;box-sizing:border-box}"
-           "button{font:inherit;padding:.7rem 1.2rem}</style><h1>Puck Wi-Fi setup</h1>"
+           "button{font:inherit;padding:.7rem 1.2rem}</style><h1>Gridley Wi-Fi setup</h1>"
            "<p>Enter a 2.4 GHz Wi-Fi network. <a href='/bars'>Edit the bar list</a>.</p>"
            "<form method='post' action='/save'><label>Network name<input name='ssid'"
            " maxlength='32' required></label><label>Wi-Fi password<input name='password'"
@@ -329,26 +328,26 @@ void saveWifi() {
   settings.putString("ssid", ssid);
   settings.putString("password", password);
   web.sendHeader("Cache-Control", "no-store");
-  web.send(200, "text/html", "<h1>Saved</h1><p>The puck is restarting to connect.</p>");
+  web.send(200, "text/html", "<h1>Saved</h1><p>Gridley is restarting to connect.</p>");
   restartAt = millis() + 2500;
 }
 
 void sendBarPage() {
   String page =
       "<!doctype html><html><meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<title>Puck bars</title><style>body{font:18px system-ui;max-width:36rem;"
+      "<title>Gridley bars</title><style>body{font:18px system-ui;max-width:36rem;"
       "margin:2rem auto;padding:0 1rem;background:#10131c;color:#eee}"
       "input,textarea{display:block;width:100%;box-sizing:border-box;padding:.7rem;"
       "font:inherit;margin:.4rem 0 1rem;background:#202635;color:#fff;border:1px solid #49dce9}"
       "textarea{height:19rem}button{font:inherit;padding:.7rem 1.2rem;"
       "background:#49dce9;border:0;border-radius:.4rem}small{color:#abb4c5}</style>"
-      "<h1>Chicago Night Spinner</h1><p>Edit the puck's local bar list.</p>"
+      "<h1>Chicago Night Spinner</h1><p>Edit Gridley's local bar list.</p>"
       "<form method='post' action='/bars'><label>Area label<input name='area' maxlength='20' value='";
   page += htmlEscape(areaLabel);
   page += "' required></label><label>Bars, one per line as Name | Street address"
           "<textarea name='bars' maxlength='1800' required>";
   page += htmlEscape(barListText());
-  page += "</textarea></label><button>Save to puck</button></form>"
+  page += "</textarea></label><button>Save to Gridley</button></form>"
           "<p><small>The starter list is around 60612. Changing the area label does not"
           " search for bars; edit the list for a new area. Check hours before going."
           " Up to 16 bars, 32 characters per name.</small></p></html>";
@@ -372,7 +371,7 @@ void saveBars() {
   spinning = false;
   screenDirty = true;
   web.sendHeader("Cache-Control", "no-store");
-  web.send(200, "text/html", "<h1>Saved to puck</h1><p><a href='/bars'>Edit again</a></p>");
+  web.send(200, "text/html", "<h1>Saved to Gridley</h1><p><a href='/bars'>Edit again</a></p>");
 }
 
 void configureWeb() {
@@ -440,7 +439,7 @@ void setup() {
   uint64_t chipId = ESP.getEfuseMac();
   char suffix[7];
   snprintf(suffix, sizeof(suffix), "%06X", static_cast<unsigned>(chipId & 0xFFFFFF));
-  apName = "Puck-" + String(suffix);
+  apName = "Gridley-" + String(suffix);
   apPassword = settings.getString("apkey", "");
   savedSsid = settings.getString("ssid", "");
   savedPassword = settings.getString("password", "");

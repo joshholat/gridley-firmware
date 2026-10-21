@@ -1,4 +1,4 @@
-# Puck firmware
+# Gridley firmware
 
 This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
@@ -14,7 +14,7 @@ Tap a launcher button to open an app and **BACK** to return. Tap **SPIN** or
 **SPIN AGAIN** in the bar app. The bar list and area label can be edited from a
 phone or computer on the same Wi-Fi network: open the IP address shown in
 Settings. Enter up to 16 lines in `Name | Street address` format. Changes are
-saved on the puck, and the new list is available immediately. Changing the area
+saved on Gridley, and the new list is available immediately. Changing the area
 label alone does not discover bars; edit the list as well if changing areas.
 
 If no network is configured or a saved connection fails, the board creates a

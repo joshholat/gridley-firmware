@@ -74,6 +74,8 @@ constexpr uint32_t MAZE_BURST_MS = 960;
 constexpr uint32_t MAZE_RESTART_MS = 3600;
 constexpr uint32_t MAZE_ENEMY_STEP_MS = 650;
 constexpr uint32_t MAZE_CAUGHT_MS = 1800;
+constexpr uint32_t MAZE_PULSE_COOLDOWN_MS = 7000;
+constexpr uint32_t MAZE_PULSE_STUN_MS = 1800;
 char mazeCells[MAZE_SIZE][MAZE_SIZE + 1];
 constexpr int VOLUME_TRACK_X = 139;
 constexpr int VOLUME_TRACK_WIDTH = 188;
@@ -120,6 +122,10 @@ unsigned long lastMazeStep = 0;
 unsigned long mazeWonAt = 0;
 unsigned long mazeCaughtAt = 0;
 unsigned long lastEnemyStep = 0;
+unsigned long mazePulseReadyAt = 0;
+unsigned long mazePulseFlashUntil = 0;
+unsigned long mazeEnemyStunnedUntil = 0;
+unsigned long mazeLastStatusDrawAt = 0;
 int mazeWinFrame = -1;
 int enemyRow = -1;
 int enemyCol = -1;
@@ -191,9 +197,13 @@ uint32_t discLastFrameAt = 0;
 uint32_t discNextShotAt = 0;
 uint32_t discFeedbackUntil = 0;
 uint8_t discFeedback = 0;
-uint32_t discParryArmedUntil = 0;
+uint32_t discBoostUntil = 0;
+uint32_t discLastTouchPoll = 0;
+uint32_t discLastTouchSeen = 0;
+bool discTouchTracking = false;
 Arduino_Canvas *discCanvas = nullptr;
 bool discCanvasTried = false;
+constexpr float DISC_TWIST_GAIN = 3.0f;
 uint32_t gameTonePhase = 0;
 uint32_t gameToneStep = 0;
 uint32_t gameToneFramesLeft = 0;
@@ -525,6 +535,7 @@ void drawMazeCell(int row, int col) {
 void drawMazePlayer() {
   int x = MAZE_X + mazeCol * MAZE_CELL + MAZE_CELL / 2;
   int y = MAZE_Y + mazeRow * MAZE_CELL + MAZE_CELL / 2;
+  if (millis() < mazePulseFlashUntil) gfx->drawCircle(x, y, 13, MAZE_GOLD);
   gfx->fillCircle(x, y, 10, CYAN);
   gfx->fillCircle(x, y, 6, WHITE);
 }
@@ -533,7 +544,8 @@ void drawMazeEnemy() {
   if (enemyRow < 0) return;
   int x = MAZE_X + enemyCol * MAZE_CELL + MAZE_CELL / 2;
   int y = MAZE_Y + enemyRow * MAZE_CELL + MAZE_CELL / 2;
-  gfx->fillRect(x - 9, y - 9, 18, 18, MAZE_ENEMY);
+  uint16_t color = millis() < mazeEnemyStunnedUntil ? BLUE : MAZE_ENEMY;
+  gfx->fillRect(x - 9, y - 9, 18, 18, color);
   gfx->drawRect(x - 10, y - 10, 20, 20, WHITE);
   gfx->fillRect(x - 3, y - 3, 6, 6, BG);
 }
@@ -607,8 +619,14 @@ void drawMazeCaught() {
 
 void drawMazeStatus() {
   gfx->fillRect(104, 407, 258, 23, BG);
-  if (imuReady) textCentered("DODGE PINK  /  TILT OR TAP", 412, 1, MUTED);
-  else textCentered("DODGE PINK  /  TAP TO MOVE", 412, 1, MAZE_GOLD);
+  unsigned long now = millis();
+  if (now < mazePulseFlashUntil)
+    textCentered("EMP! SENTINEL REPELLED", 412, 1, MAZE_GOLD);
+  else if (now < mazePulseReadyAt)
+    textCentered("EMP RECHARGING " + String((mazePulseReadyAt - now + 999) / 1000) + "s",
+                 412, 1, MUTED);
+  else textCentered("TILT/TAP MOVE  /  BUTTON: EMP", 412, 1, MAZE_GOLD);
+  mazeLastStatusDrawAt = now;
 }
 
 void drawMaze() {
@@ -646,6 +664,10 @@ void resetMaze() {
   mazeWonAt = 0;
   mazeCaughtAt = 0;
   mazeWinFrame = -1;
+  mazePulseReadyAt = 0;
+  mazePulseFlashUntil = 0;
+  mazeEnemyStunnedUntil = 0;
+  mazeLastStatusDrawAt = 0;
   screenDirty = true;
 }
 
@@ -655,6 +677,59 @@ void catchMazePlayer() {
   Serial.println("Grid Maze: sentinel caught player");
   playMazeSound(false);
   drawMazeCaught();
+}
+
+void fireMazePulse() {
+  unsigned long now = millis();
+  if (screen != GRID_MAZE || mazeWon || mazeCaught || now < mazePulseReadyAt ||
+      enemyRow < 0) return;
+
+  // The EMP relocates the sentinel to a distant reachable tile, even when
+  // a narrow corridor leaves no physical space to push it back one square.
+  int8_t distance[MAZE_SIZE][MAZE_SIZE];
+  for (int row = 0; row < MAZE_SIZE; ++row)
+    for (int col = 0; col < MAZE_SIZE; ++col) distance[row][col] = -1;
+  uint8_t queueRow[MAZE_SIZE * MAZE_SIZE];
+  uint8_t queueCol[MAZE_SIZE * MAZE_SIZE];
+  int head = 0, tail = 0;
+  queueRow[tail] = mazeRow;
+  queueCol[tail++] = mazeCol;
+  distance[mazeRow][mazeCol] = 0;
+  const int8_t dRow[] = {-1, 1, 0, 0};
+  const int8_t dCol[] = {0, 0, -1, 1};
+  int bestDistance = -1;
+  int bestRow = -1, bestCol = -1;
+  while (head < tail) {
+    int row = queueRow[head];
+    int col = queueCol[head++];
+    if (distance[row][col] > bestDistance &&
+        mazeCells[row][col] != 'G' &&
+        (row != enemyRow || col != enemyCol) &&
+        (row != mazeRow || col != mazeCol)) {
+      bestDistance = distance[row][col];
+      bestRow = row;
+      bestCol = col;
+    }
+    for (int dir = 0; dir < 4; ++dir) {
+      int nextRow = row + dRow[dir];
+      int nextCol = col + dCol[dir];
+      if (mazeWall(nextRow, nextCol) || distance[nextRow][nextCol] >= 0) continue;
+      distance[nextRow][nextCol] = distance[row][col] + 1;
+      queueRow[tail] = nextRow;
+      queueCol[tail++] = nextCol;
+    }
+  }
+  if (bestRow < 0) return;
+  enemyRow = bestRow;
+  enemyCol = bestCol;
+  enemyPrevRow = enemyPrevCol = -1;
+  lastEnemyStep = now;
+  mazePulseReadyAt = now + MAZE_PULSE_COOLDOWN_MS;
+  mazePulseFlashUntil = now + 750;
+  mazeEnemyStunnedUntil = now + MAZE_PULSE_STUN_MS;
+  playDiscTone(720, 130);
+  Serial.printf("Grid Maze EMP: sentinel repelled to %d,%d\n", enemyRow, enemyCol);
+  screenDirty = true;
 }
 
 bool stepMaze(int dRow, int dCol) {
@@ -703,7 +778,8 @@ void updateMazeCelebration() {
 }
 
 void updateMazeEnemy() {
-  if (enemyRow < 0 || millis() - lastEnemyStep < MAZE_ENEMY_STEP_MS) return;
+  if (enemyRow < 0 || millis() < mazeEnemyStunnedUntil ||
+      millis() - lastEnemyStep < MAZE_ENEMY_STEP_MS) return;
   lastEnemyStep = millis();
   const int8_t dRow[] = {-1, 1, 0, 0};
   const int8_t dCol[] = {0, 0, -1, 1};
@@ -779,10 +855,15 @@ void updateMaze() {
     updateMazeCelebration();
     return;
   }
+  unsigned long now = millis();
+  if (mazePulseFlashUntil && now >= mazePulseFlashUntil) {
+    mazePulseFlashUntil = 0;
+    screenDirty = true;
+  }
+  if (now - mazeLastStatusDrawAt >= 250) drawMazeStatus();
   updateMazeEnemy();
   if (mazeCaught) return;
   if (!imuReady) return;
-  unsigned long now = millis();
   if (now - lastMazeStep < MAZE_STEP_MS) return;
   AccelerometerData accel;
   if (!imu.readAccel(accel)) return;
@@ -1452,7 +1533,6 @@ void spawnDiscShot() {
       (esp_random() % 6283) / 1000.0f - PI;
   discShotRadius = 112;
   discShotActive = true;
-  discParryArmedUntil = 0;
 }
 
 void startDiscDefender() {
@@ -1464,7 +1544,8 @@ void startDiscDefender() {
   discShieldAngle = -PI / 2;
   discFeedback = 0;
   discFeedbackUntil = 0;
-  discParryArmedUntil = 0;
+  discBoostUntil = 0;
+  discTouchTracking = false;
   discLastUpdateAt = millis();
   discLastFrameAt = 0;
   spawnDiscShot();
@@ -1483,25 +1564,29 @@ void finishDiscDefender() {
   screenDirty = true;
 }
 
-void discParry(int x, int y) {
+void boostDiscShield() {
   if (discPhase != DISC_PLAYING) return;
-  if (!gyroReady && x >= 0) {
-    float dx = x - 233;
-    float dy = y - 282;
-    if (dx * dx + dy * dy > 55 * 55)
-      discShieldAngle = atan2f(dy, dx);
-  }
   uint32_t now = millis();
-  if (!discShotActive) return;
-  if (discShotRadius <= 89) {
+  if (discShotActive && discShotRadius <= 89) {
     discFeedback = 5;
     discFeedbackUntil = now + 350;
     return;
   }
-  discParryArmedUntil = now + 1100;
+  discBoostUntil = now + 1100;
   discFeedback = 4;
   discFeedbackUntil = now + 320;
   playDiscTone(430, 45);
+}
+
+bool aimDiscShield(int x, int y) {
+  if (discPhase != DISC_PLAYING) return false;
+  float dx = x - 233;
+  float dy = y - 282;
+  float radiusSquared = dx * dx + dy * dy;
+  if (radiusSquared < 50 * 50 || radiusSquared > 130 * 130) return false;
+  discShieldAngle = atan2f(dy, dx);
+  discLastFrameAt = 0;
+  return true;
 }
 
 void drawDiscFrame() {
@@ -1539,12 +1624,12 @@ void drawDiscFrame() {
   field->setCursor(cx - 12, cy + 28);
   field->print("CORE");
 
-  bool parryArmed = discParryArmedUntil && millis() < discParryArmedUntil;
+  bool boostActive = discBoostUntil && millis() < discBoostUntil;
   for (int step = -6; step <= 6; ++step) {
     float angle = discShieldAngle + step * 0.055f;
     field->fillCircle(cx + cosf(angle) * 89,
                       cy + sinf(angle) * 89, 5,
-                      parryArmed ? MAZE_GOLD : abs(step) < 3 ? WHITE : CYAN);
+                      boostActive ? MAZE_GOLD : abs(step) < 3 ? WHITE : CYAN);
   }
 
   if (discShotActive) {
@@ -1559,10 +1644,10 @@ void drawDiscFrame() {
     field->fillRect(shotX - 2, shotY - 2, 5, 5, WHITE);
   }
   if (discFeedback && millis() < discFeedbackUntil) {
-    const char *label = discFeedback == 2 ? "PERFECT +3" :
+    const char *label = discFeedback == 2 ? "BOOST +3" :
                         discFeedback == 1 ? "BLOCK +1" :
                         discFeedback == 3 ? "CORE HIT" :
-                        discFeedback == 4 ? "PARRY READY" : "SHOT PASSED";
+                        discFeedback == 4 ? "SHIELD CHARGED" : "SHOT PASSED";
     int width = strlen(label) * 12;
     field->fillRoundRect(cx - width / 2 - 12, cy - 13,
                          width + 24, 29, 8, PANEL);
@@ -1579,9 +1664,9 @@ void drawDiscDefender() {
   chrome("DISC DEFENDER");
   if (discPhase == DISC_READY) {
     textCentered("DEFEND THE CORE", 198, 2, WHITE);
-    textCentered(gyroReady ? "TWIST ARC TO BLOCK" : "TOUCH EDGE TO AIM",
+    textCentered(gyroReady ? "TWIST OR TOUCH RING" : "TOUCH RING TO AIM",
                  237, 2, CYAN);
-    textCentered("TAP/BUTTON: BONUS PARRY", 266, 2, WHITE);
+    textCentered("BUTTON/CORE: BOOST", 266, 2, WHITE);
     textCentered("THREE HITS TO LOSE", 292, 2, MUTED);
     button(101, 352, 264, 55, "START", CYAN);
   } else if (discPhase == DISC_OVER) {
@@ -1593,7 +1678,7 @@ void drawDiscDefender() {
     textCentered("SCORE " + String(discScore) + "   HP " + String(discLives),
                  139, 2, WHITE);
     drawDiscFrame();
-    textCentered("STREAK " + String(discStreak) + "  /  ARC BLOCKS  /  TAP BOOSTS",
+    textCentered("STREAK " + String(discStreak) + "  /  ARC BLOCKS  /  BUTTON BOOSTS",
                  423, 1, MUTED);
   }
   if (discPhase != DISC_PLAYING)
@@ -1610,7 +1695,7 @@ void updateDiscDefender() {
   if (gyroReady) {
     GyroscopeData gyro;
     if (imu.readGyro(gyro) && fabsf(gyro.dps.z) > 7)
-      discShieldAngle -= gyro.dps.z * (PI / 180.0f) * seconds;
+      discShieldAngle -= gyro.dps.z * (PI / 180.0f) * seconds * DISC_TWIST_GAIN;
   }
   if (discShotActive) {
     float speed = 31 + min(discScore, uint16_t(20)) * 0.7f;
@@ -1619,12 +1704,12 @@ void updateDiscDefender() {
     if (previousRadius > 89 && discShotRadius <= 89) {
       float angleError = discAngleDistance(discShieldAngle, discShotAngle);
       if (angleError <= 0.39f) {
-        bool perfect = discParryArmedUntil && now <= discParryArmedUntil &&
+        bool perfect = discBoostUntil && now <= discBoostUntil &&
                        angleError <= 0.23f;
         discScore += perfect ? 3 : 1;
         ++discStreak;
         discShotActive = false;
-        discParryArmedUntil = 0;
+        discBoostUntil = 0;
         discNextShotAt = now + 450;
         discFeedback = perfect ? 2 : 1;
         discFeedbackUntil = now + 380;
@@ -1634,7 +1719,7 @@ void updateDiscDefender() {
         screenDirty = true;
         return;
       }
-      discParryArmedUntil = 0;
+      discBoostUntil = 0;
       discFeedback = 5;
       discFeedbackUntil = now + 350;
     }
@@ -1656,6 +1741,36 @@ void updateDiscDefender() {
     spawnDiscShot();
   }
   if (!screenDirty && now - discLastFrameAt >= 33) drawDiscFrame();
+}
+
+void pollDiscTouch(bool pending) {
+  uint32_t now = millis();
+  if (!pending && (!discTouchTracking || now - discLastTouchPoll < 25)) return;
+  discLastTouchPoll = now;
+  int16_t x[1] = {}, y[1] = {};
+  if (!touch.getPoint(x, y, 1)) {
+    if (discTouchTracking && now - discLastTouchSeen > 120)
+      discTouchTracking = false;
+    return;
+  }
+  if (discTouchTracking && now - discLastTouchSeen > 180)
+    discTouchTracking = false;
+  discLastTouchSeen = now;
+  if (!discTouchTracking) {
+    discTouchTracking = true;
+    if (x[0] >= 91 && x[0] <= 184 && y[0] >= 91 && y[0] <= 136) {
+      discTouchTracking = false;
+      handleTap(x[0], y[0]);
+      return;
+    }
+    if (!aimDiscShield(x[0], y[0])) {
+      float dx = x[0] - 233;
+      float dy = y[0] - 282;
+      if (dx * dx + dy * dy <= 50 * 50) boostDiscShield();
+    }
+  } else {
+    aimDiscShield(x[0], y[0]);
+  }
 }
 
 void pollBootButton() {
@@ -1689,9 +1804,14 @@ void pollBootButton() {
       else gridleyInput(GRID_PRESS);
       return;
     }
+    if (screen == GRID_MAZE) {
+      bootLastTapAt = 0;
+      fireMazePulse();
+      return;
+    }
     if (screen == DISC_DEFENDER) {
       bootLastTapAt = 0;
-      if (discPhase == DISC_PLAYING) discParry(-1, -1);
+      if (discPhase == DISC_PLAYING) boostDiscShield();
       else startDiscDefender();
       return;
     }
@@ -1747,8 +1867,8 @@ void handleTap(int x, int y) {
       if ((gridPhase == GRID_READY || gridPhase == GRID_OVER) &&
           y >= 345 && y <= 420) startGridleySays();
     } else if (screen == DISC_DEFENDER) {
-      if (discPhase == DISC_PLAYING) discParry(x, y);
-      else if (x >= 101 && x <= 365 && y >= 352 && y <= 407)
+      if (discPhase != DISC_PLAYING &&
+          x >= 101 && x <= 365 && y >= 352 && y <= 407)
         startDiscDefender();
     } else if (screen == GRID_MAZE) {
       if (mazeWon || mazeCaught) return;
@@ -1788,6 +1908,10 @@ void pollTouch() {
   interrupts();
   if (screen == GRIDLEY_SAYS) {
     pollGridleyTouch(pending);
+    return;
+  }
+  if (screen == DISC_DEFENDER && discPhase == DISC_PLAYING) {
+    pollDiscTouch(pending);
     return;
   }
   if (!pending) return;

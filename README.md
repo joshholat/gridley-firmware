@@ -17,8 +17,10 @@ avoiding the pink sentinel. It patrols the maze and follows you down clear
 straight corridors. Touching it plays a descending sound and shows a brief
 "ZAPPED!" screen, then starts a new round. The onboard QMI8658 motion sensor
 drives the puck; tapping the maze nudges it one square in the direction you
-tapped. Downward movement needs a
-little more tilt, so a normal viewing angle is less likely to move the puck.
+tapped. Press BOOT to fire an EMP pulse that sends the sentinel to a distant
+part of the maze and stuns it briefly. The pulse recharges in seven seconds;
+the remaining time appears below the maze. Downward movement needs a little
+more tilt, so a normal viewing angle is less likely to move the puck.
 Reaching the exit triggers an ascending sound, a short pixel-art explosion,
 and a congratulations screen, then starts another new maze automatically. If
 the sensor is unavailable, touch control still works.
@@ -34,14 +36,16 @@ starting angle between tilt commands. The BOOT button still clears Wi-Fi after
 a three-second hold, even while this game is open.
 
 **Disc Defender** is a quick arcade game about protecting the glowing core.
-Twist the puck to move the bright shield arc around its ring. The arc blocks
-pink shots automatically when they reach it, earning one point. Tap the
-touchscreen or press BOOT as a shot approaches to briefly power up the arc;
-a well-aimed boosted block earns three points. Shots that miss the arc keep
-moving toward the core and cost a hit point if they reach it. Build a streak,
-protect three hit points, and beat the saved high score. The speaker makes
-short arcade tones for blocks and core hits. If the gyroscope is unavailable,
-touch near the outer ring to aim.
+Twist the puck, or touch and drag around the ring, to move the bright shield
+arc all the way around the core. Turning the puck moves the arc three times as
+far, making the lower half easier to reach. The arc blocks pink shots
+automatically when they reach it, earning one point. Press BOOT or tap the
+center core as a shot approaches to charge the shield briefly; a well-aimed
+charged block earns three points. This is a shield boost, not a shot. Pink
+shots that miss the arc keep moving toward the core and cost a hit point if
+they reach it. Build a streak, protect three hit points, and beat the saved
+high score. The speaker makes short arcade tones for blocks and core hits.
+Touch aiming works even if the gyroscope is unavailable.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and
@@ -62,7 +66,7 @@ a simple device page.
 When connected, hold the **BOOT** button for three seconds to clear the saved
 Wi-Fi details and show the setup network again.
 
-Outside Gridley Says and Disc Defender, double tap **BOOT** (two quick
+Outside Grid Maze, Gridley Says, and Disc Defender, double tap **BOOT** (two quick
 press-and-release actions, within about 450 ms) to play the locally installed
 sound through the built-in speaker. The sound is stored in the firmware, so
 playback works without Wi-Fi. A single tap has no action there. The

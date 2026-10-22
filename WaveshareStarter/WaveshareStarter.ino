@@ -157,7 +157,8 @@ Arduino_Canvas *soundCanvas = nullptr;
 
 enum GridMove : uint8_t {
   GRID_SHAKE, GRID_FLICK, GRID_TILT_LEFT, GRID_TILT_RIGHT,
-  GRID_TAP, GRID_SWIPE, GRID_PRESS
+  GRID_TAP, GRID_SWIPE_UP, GRID_SWIPE_DOWN, GRID_SWIPE_LEFT,
+  GRID_SWIPE_RIGHT, GRID_PRESS
 };
 enum GridPhase : uint8_t { GRID_READY, GRID_PROMPT, GRID_SUCCESS, GRID_OVER };
 GridPhase gridPhase = GRID_READY;
@@ -1327,7 +1328,8 @@ void playMazeSound(bool won) {
 void playGridSound(GameSoundKind kind, GridMove move = GRID_TAP) {
   if (!audioReady || !audioVolume || micActive || audioPlaying) return;
   if (kind == GAME_SOUND_GRID_PROMPT) {
-    const uint16_t pitches[] = {600, 740, 500, 560, 680, 820, 450};
+    const uint16_t pitches[] = {600, 740, 500, 560, 680,
+                                760, 800, 720, 840, 450};
     gridPromptPitch = pitches[move];
   }
   gameSoundKind = kind;
@@ -1379,7 +1381,10 @@ const char *gridMoveLabel(GridMove move) {
     case GRID_TILT_LEFT: return "TILT LEFT";
     case GRID_TILT_RIGHT: return "TILT RIGHT";
     case GRID_TAP: return "TAP IT";
-    case GRID_SWIPE: return "SWIPE IT";
+    case GRID_SWIPE_UP: return "SWIPE UP";
+    case GRID_SWIPE_DOWN: return "SWIPE DOWN";
+    case GRID_SWIPE_LEFT: return "SWIPE LEFT";
+    case GRID_SWIPE_RIGHT: return "SWIPE RIGHT";
     case GRID_PRESS: return "PRESS BUTTON";
   }
   return "MOVE IT";
@@ -1392,7 +1397,10 @@ const char *gridMoveHint(GridMove move) {
     case GRID_TILT_LEFT: return "LEAN LEFT AND HOLD";
     case GRID_TILT_RIGHT: return "LEAN RIGHT AND HOLD";
     case GRID_TAP: return "TOUCH THE SCREEN";
-    case GRID_SWIPE: return "DRAG ACROSS THE SCREEN";
+    case GRID_SWIPE_UP: return "DRAG TOWARD THE TOP";
+    case GRID_SWIPE_DOWN: return "DRAG TOWARD THE BOTTOM";
+    case GRID_SWIPE_LEFT: return "DRAG TOWARD THE LEFT";
+    case GRID_SWIPE_RIGHT: return "DRAG TOWARD THE RIGHT";
     case GRID_PRESS: return "ONE SHORT BUTTON PRESS";
   }
   return "FOLLOW THE GRID";
@@ -1471,7 +1479,7 @@ void drawGridleySays() {
   if (gridPhase == GRID_READY) {
     textCentered("FOLLOW THE COMMAND", 205, 2, WHITE);
     textCentered("SHAKE / FLICK / TILT", 251, 1, CYAN);
-    textCentered("TAP / SWIPE / BUTTON", 269, 1, CYAN);
+    textCentered("TAP / SWIPE 4 WAYS / BUTTON", 269, 1, CYAN);
     button(101, 352, 264, 55, "START", PURPLE);
   } else if (gridPhase == GRID_PROMPT) {
     uint16_t color = gridMoveColor(gridMove);
@@ -1503,7 +1511,7 @@ void drawGridleySays() {
 }
 
 void nextGridleyCommand() {
-  GridMove choices[7];
+  GridMove choices[10];
   int count = 0;
   if (imuReady) {
     choices[count++] = GRID_SHAKE;
@@ -1513,7 +1521,10 @@ void nextGridleyCommand() {
   if (gyroReady) choices[count++] = GRID_FLICK;
   if (touchReady) {
     choices[count++] = GRID_TAP;
-    choices[count++] = GRID_SWIPE;
+    choices[count++] = GRID_SWIPE_UP;
+    choices[count++] = GRID_SWIPE_DOWN;
+    choices[count++] = GRID_SWIPE_LEFT;
+    choices[count++] = GRID_SWIPE_RIGHT;
   }
   choices[count++] = GRID_PRESS;
   int chosen = esp_random() % count;
@@ -1654,6 +1665,11 @@ void updateGridleySays() {
   }
 }
 
+bool gridIsSwipeMove(GridMove move) {
+  return move == GRID_SWIPE_UP || move == GRID_SWIPE_DOWN ||
+         move == GRID_SWIPE_LEFT || move == GRID_SWIPE_RIGHT;
+}
+
 void pollGridleyTouch(bool pending) {
   uint32_t now = millis();
   if (!pending && (!gridTouchTracking || now - gridLastTouchPoll < 25)) return;
@@ -1681,13 +1697,19 @@ void pollGridleyTouch(bool pending) {
       if (y[0] >= 345 && y[0] <= 420) startGridleySays();
     } else if (gridPhase == GRID_PROMPT && now >= gridTouchArmedAt) {
       if (gridMove == GRID_TAP) gridleyInput(GRID_TAP);
-      else if (gridMove != GRID_SWIPE) finishGridleySays();
+      else if (!gridIsSwipeMove(gridMove)) finishGridleySays();
     }
-  } else if (gridPhase == GRID_PROMPT && gridMove == GRID_SWIPE &&
-             now >= gridTouchArmedAt && now - gridTouchStartAt < 900 &&
-             (abs(x[0] - gridTouchStartX) > 70 ||
-              abs(y[0] - gridTouchStartY) > 70)) {
-    gridleyInput(GRID_SWIPE);
+  } else if (gridPhase == GRID_PROMPT && gridIsSwipeMove(gridMove) &&
+             now >= gridTouchArmedAt && now - gridTouchStartAt < 900) {
+    int dx = x[0] - gridTouchStartX;
+    int dy = y[0] - gridTouchStartY;
+    int distanceX = abs(dx);
+    int distanceY = abs(dy);
+    // Wait for a clear axis so a diagonal gesture is not guessed incorrectly.
+    if (distanceX > 70 && distanceX * 5 >= distanceY * 6)
+      gridleyInput(dx > 0 ? GRID_SWIPE_RIGHT : GRID_SWIPE_LEFT);
+    else if (distanceY > 70 && distanceY * 5 >= distanceX * 6)
+      gridleyInput(dy > 0 ? GRID_SWIPE_DOWN : GRID_SWIPE_UP);
   }
 }
 

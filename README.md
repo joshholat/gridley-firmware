@@ -192,4 +192,7 @@ for play testing and may need adjustment based on how the puck feels in hand.
 
 The flick command now requires a fast twist around the screen's face, while
 left and right tilts must be held briefly. This separates a quick right lean
-from a flick. The game screen calls the BOOT action **PRESS BUTTON**.
+from a flick. The game screen calls the BOOT action **PRESS BUTTON**. Its
+countdown now uses sixteen discrete segments so each step clears cleanly.
+Taps outside an app button no longer redraw the launcher or delay the next
+attempt.

@@ -213,7 +213,8 @@ bool gridLastAccelValid = false;
 bool gridTouchTracking = false;
 int gridTouchStartX = 0;
 int gridTouchStartY = 0;
-int gridLastTimerWidth = -1;
+constexpr int GRID_TIMER_SEGMENTS = 16;
+int gridLastTimerSegments = -1;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -1386,6 +1387,13 @@ uint16_t gridMoveColor(GridMove move) {
   return CYAN;
 }
 
+int gridTimerSegmentsRemaining(uint32_t now) {
+  uint32_t elapsed = now - gridPromptAt;
+  if (elapsed >= gridTimeLimit) return 0;
+  return (GRID_TIMER_SEGMENTS * (gridTimeLimit - elapsed) + gridTimeLimit - 1) /
+         gridTimeLimit;
+}
+
 void drawGridleySays() {
   chrome("GRIDLEY SAYS");
   textCentered("SCORE " + String(gridScore) + "  /  BEST " + String(gridBest),
@@ -1393,7 +1401,7 @@ void drawGridleySays() {
   if (gridPhase == GRID_READY) {
     textCentered("FOLLOW THE COMMAND", 205, 2, WHITE);
     textCentered("SHAKE / FLICK / TILT", 251, 1, CYAN);
-    textCentered("TAP / SWIPE / BOOT", 269, 1, CYAN);
+    textCentered("TAP / SWIPE / BUTTON", 269, 1, CYAN);
     button(101, 352, 264, 55, "START", PURPLE);
   } else if (gridPhase == GRID_PROMPT) {
     uint16_t color = gridMoveColor(gridMove);
@@ -1402,11 +1410,12 @@ void drawGridleySays() {
     textCentered(gridMoveLabel(gridMove), 220, 3, color);
     textCentered(gridMoveHint(gridMove), 275, 1, WHITE);
     gfx->drawRoundRect(98, 365, 270, 20, 8, BLUE);
-    uint32_t elapsed = millis() - gridPromptAt;
-    int width = elapsed >= gridTimeLimit ? 0 :
-        262 * (gridTimeLimit - elapsed) / gridTimeLimit;
-    if (width > 0) gfx->fillRoundRect(102, 369, width, 12, 5, color);
-    gridLastTimerWidth = width;
+    int remaining = gridTimerSegmentsRemaining(millis());
+    for (int segment = 0; segment < GRID_TIMER_SEGMENTS; ++segment) {
+      gfx->fillRect(106 + segment * 16, 369, 14, 12,
+                    segment < remaining ? color : PANEL);
+    }
+    gridLastTimerSegments = remaining;
   } else if (gridPhase == GRID_SUCCESS) {
     textCentered("NICE MOVE", 215, 3, CYAN);
     textCentered("NEXT COMMAND...", 270, 2, WHITE);
@@ -1445,7 +1454,7 @@ void nextGridleyCommand() {
   gridLastMotionPoll = 0;
   gridTiltStartedAt = 0;
   gridLastAccelValid = false;
-  gridLastTimerWidth = -1;
+  gridLastTimerSegments = -1;
   if (imuReady) {
     AccelerometerData accel;
     if (imu.readAccel(accel)) {
@@ -1504,11 +1513,13 @@ void updateGridleySays() {
     finishGridleySays();
     return;
   }
-  int width = 262 * (gridTimeLimit - (now - gridPromptAt)) / gridTimeLimit;
-  if (gridLastTimerWidth >= 0 && width < gridLastTimerWidth &&
+  int remaining = gridTimerSegmentsRemaining(now);
+  if (gridLastTimerSegments >= 0 && remaining < gridLastTimerSegments &&
       !screenDirty) {
-    gfx->fillRect(102 + width, 369, gridLastTimerWidth - width, 12, BG);
-    gridLastTimerWidth = width;
+    for (int segment = remaining; segment < gridLastTimerSegments; ++segment) {
+      gfx->fillRect(106 + segment * 16, 369, 14, 12, PANEL);
+    }
+    gridLastTimerSegments = remaining;
   }
   if (!imuReady || now - gridLastMotionPoll < 25) return;
   gridLastMotionPoll = now;
@@ -1672,6 +1683,7 @@ void updateSpin() {
 }
 
 void handleTap(int x, int y) {
+  AppScreen previousScreen = screen;
   if (screen == LAUNCHER) {
     if (x >= 84 && x <= 382 && y >= 146 && y <= 194) screen = NIGHT_SPINNER;
     else if (x >= 84 && x <= 382 && y >= 201 && y <= 249) {
@@ -1726,7 +1738,7 @@ void handleTap(int x, int y) {
       }
     }
   }
-  screenDirty = true;
+  if (screen != previousScreen) screenDirty = true;
 }
 
 void pollTouch() {
@@ -1743,9 +1755,11 @@ void pollTouch() {
   int16_t x[1] = {}, y[1] = {};
   if (!touch.getPoint(x, y, 1)) return;
   if (millis() - lastTap < 260) return;
-  lastTap = millis();
   Serial.printf("Touch: %d,%d\n", x[0], y[0]);
+  AppScreen previousScreen = screen;
   handleTap(x[0], y[0]);
+  // A launcher miss should not delay the next attempt to tap an app.
+  if (previousScreen != LAUNCHER || screen != previousScreen) lastTap = millis();
 }
 
 void sendWifiSetupPage() {

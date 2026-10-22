@@ -220,8 +220,13 @@ constexpr float DISC_MIN_SHOT_ANGLE = 0.8f;
 uint32_t gameTonePhase = 0;
 uint32_t gameToneStep = 0;
 uint32_t gameToneFramesLeft = 0;
-uint8_t mazeSoundKind = 0;
-uint8_t mazeSoundNote = 0;
+enum GameSoundKind : uint8_t {
+  GAME_SOUND_NONE, GAME_SOUND_MAZE_WIN, GAME_SOUND_MAZE_LOSE,
+  GAME_SOUND_GRID_PROMPT, GAME_SOUND_GRID_SUCCESS, GAME_SOUND_GRID_LOSE
+};
+GameSoundKind gameSoundKind = GAME_SOUND_NONE;
+uint8_t gameSoundNote = 0;
+uint16_t gridPromptPitch = 0;
 
 void playMazeSound(bool won);
 
@@ -1254,7 +1259,7 @@ void playAudioClip() {
   }
   audioOffset = 0;
   gameToneFramesLeft = 0;
-  mazeSoundKind = 0;
+  gameSoundKind = GAME_SOUND_NONE;
   audioPowerDownAt = 0;
   audioPlaying = true;
   digitalWrite(AUDIO_PA, HIGH);
@@ -1274,30 +1279,60 @@ void startGameTone(uint16_t frequency, uint16_t durationMs) {
 }
 
 void playDiscTone(uint16_t frequency, uint16_t durationMs) {
-  mazeSoundKind = 0;
+  gameSoundKind = GAME_SOUND_NONE;
   startGameTone(frequency, durationMs);
 }
 
-void advanceMazeSound() {
-  const uint16_t winNotes[] = {523, 659, 784};
-  const uint16_t loseNotes[] = {350, 260, 160};
-  const uint16_t winLengths[] = {90, 90, 210};
-  const uint16_t loseLengths[] = {120, 130, 240};
-  if (mazeSoundNote >= 3) {
-    mazeSoundKind = 0;
+void advanceGameSound() {
+  uint16_t pitch = 0;
+  uint16_t length = 0;
+  if (gameSoundKind == GAME_SOUND_MAZE_WIN && gameSoundNote < 3) {
+    const uint16_t notes[] = {523, 659, 784};
+    const uint16_t lengths[] = {90, 90, 210};
+    pitch = notes[gameSoundNote];
+    length = lengths[gameSoundNote];
+  } else if (gameSoundKind == GAME_SOUND_MAZE_LOSE && gameSoundNote < 3) {
+    const uint16_t notes[] = {350, 260, 160};
+    const uint16_t lengths[] = {120, 130, 240};
+    pitch = notes[gameSoundNote];
+    length = lengths[gameSoundNote];
+  } else if (gameSoundKind == GAME_SOUND_GRID_PROMPT && gameSoundNote < 2) {
+    pitch = gridPromptPitch + gameSoundNote * 100;
+    length = gameSoundNote ? 85 : 55;
+  } else if (gameSoundKind == GAME_SOUND_GRID_SUCCESS && gameSoundNote < 2) {
+    pitch = gameSoundNote ? 1047 : 700;
+    length = gameSoundNote ? 160 : 90;
+  } else if (gameSoundKind == GAME_SOUND_GRID_LOSE && gameSoundNote < 3) {
+    const uint16_t notes[] = {420, 300, 180};
+    const uint16_t lengths[] = {110, 140, 230};
+    pitch = notes[gameSoundNote];
+    length = lengths[gameSoundNote];
+  }
+  if (!length) {
+    gameSoundKind = GAME_SOUND_NONE;
     audioPowerDownAt = millis() + 100;
     return;
   }
-  int note = mazeSoundNote++;
-  startGameTone(mazeSoundKind == 1 ? winNotes[note] : loseNotes[note],
-                mazeSoundKind == 1 ? winLengths[note] : loseLengths[note]);
+  ++gameSoundNote;
+  startGameTone(pitch, length);
 }
 
 void playMazeSound(bool won) {
   if (!audioReady || !audioVolume || micActive || audioPlaying) return;
-  mazeSoundKind = won ? 1 : 2;
-  mazeSoundNote = 0;
-  advanceMazeSound();
+  gameSoundKind = won ? GAME_SOUND_MAZE_WIN : GAME_SOUND_MAZE_LOSE;
+  gameSoundNote = 0;
+  advanceGameSound();
+}
+
+void playGridSound(GameSoundKind kind, GridMove move = GRID_TAP) {
+  if (!audioReady || !audioVolume || micActive || audioPlaying) return;
+  if (kind == GAME_SOUND_GRID_PROMPT) {
+    const uint16_t pitches[] = {600, 740, 500, 560, 680, 820, 450};
+    gridPromptPitch = pitches[move];
+  }
+  gameSoundKind = kind;
+  gameSoundNote = 0;
+  advanceGameSound();
 }
 
 void pumpAudio() {
@@ -1328,8 +1363,8 @@ void pumpAudio() {
     gameToneFramesLeft -= min(frames, static_cast<uint32_t>(written / 4));
     if (!gameToneFramesLeft) audioPowerDownAt = millis() + 100;
   }
-  if (!audioPlaying && !gameToneFramesLeft && mazeSoundKind)
-    advanceMazeSound();
+  if (!audioPlaying && !gameToneFramesLeft && gameSoundKind != GAME_SOUND_NONE)
+    advanceGameSound();
   if (audioPowerDownAt &&
       static_cast<int32_t>(millis() - audioPowerDownAt) >= 0) {
     digitalWrite(AUDIO_PA, LOW);
@@ -1507,6 +1542,7 @@ void nextGridleyCommand() {
   }
   Serial.printf("Gridley Says: %s, score %u\n", gridMoveLabel(gridMove),
                 gridScore);
+  playGridSound(GAME_SOUND_GRID_PROMPT, gridMove);
   screenDirty = true;
 }
 
@@ -1527,6 +1563,7 @@ void finishGridleySays() {
     settings.putUShort("gridBest", gridBest);
   }
   Serial.printf("Gridley Says over: %u, best %u\n", gridScore, gridBest);
+  playGridSound(GAME_SOUND_GRID_LOSE);
   screenDirty = true;
 }
 
@@ -1540,6 +1577,7 @@ void gridleyInput(GridMove input) {
   gridPhase = GRID_SUCCESS;
   gridFeedbackAt = millis();
   Serial.printf("Gridley Says good: %u\n", gridScore);
+  playGridSound(GAME_SOUND_GRID_SUCCESS);
   screenDirty = true;
 }
 

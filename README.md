@@ -37,7 +37,9 @@ score rises, and your best score is saved on the device. Shake and tilt use the
 accelerometer; the quick twist uses the gyroscope. Tap **START** or briefly press BOOT to play. A wrong touch or button
 press ends the round, and a missed motion times out. Return the puck toward its
 starting angle between tilt commands. The BOOT button still clears Wi-Fi after
-a three-second hold, even while this game is open.
+a three-second hold, even while this game is open. Each command has a short
+two-note cue; correct moves play an ascending chime and a loss plays a
+descending one. The sounds follow the volume setting and work without Wi-Fi.
 
 **Disc Defender** is a quick arcade game about protecting the glowing core.
 Tilt the puck left or right to spin the bright shield arc continuously in

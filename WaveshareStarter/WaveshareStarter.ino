@@ -74,6 +74,7 @@ constexpr uint16_t MAZE_FLOOR = 0x000C;
 constexpr uint16_t MAZE_WALL = 0x0824;
 constexpr uint16_t MAZE_GRID = 0x19B0;
 constexpr uint16_t MAZE_GOLD = 0xFEA0;
+constexpr uint16_t MAZE_ENEMY = 0xF81F;
 constexpr int MAZE_SIZE = 9;
 constexpr int MAZE_CELL = 28;
 constexpr int MAZE_X = 107;
@@ -83,17 +84,9 @@ constexpr float MAZE_TILT_THRESHOLD = 0.17f;
 constexpr float MAZE_DOWN_TILT_THRESHOLD = 0.32f;
 constexpr uint32_t MAZE_BURST_MS = 960;
 constexpr uint32_t MAZE_RESTART_MS = 3600;
-const char *const MAZE_ROWS[MAZE_SIZE] = {
-    "#########",
-    "#S..#...#",
-    "###.#.#.#",
-    "#...#.#.#",
-    "#.###.#.#",
-    "#.....#.#",
-    "#.#####.#",
-    "#......G#",
-    "#########",
-};
+constexpr uint32_t MAZE_ENEMY_STEP_MS = 650;
+constexpr uint32_t MAZE_CAUGHT_MS = 1800;
+char mazeCells[MAZE_SIZE][MAZE_SIZE + 1];
 constexpr int VOLUME_TRACK_X = 139;
 constexpr int VOLUME_TRACK_WIDTH = 188;
 constexpr int VOLUME_BUTTON_Y = 348;
@@ -130,11 +123,18 @@ bool bootStablePressed = false;
 int mazeRow = 1;
 int mazeCol = 1;
 bool mazeWon = false;
+bool mazeCaught = false;
 float mazeTiltX = 0;
 float mazeTiltY = 0;
 unsigned long lastMazeStep = 0;
 unsigned long mazeWonAt = 0;
+unsigned long mazeCaughtAt = 0;
+unsigned long lastEnemyStep = 0;
 int mazeWinFrame = -1;
+int enemyRow = -1;
+int enemyCol = -1;
+int enemyPrevRow = -1;
+int enemyPrevCol = -1;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -306,9 +306,95 @@ void drawLauncher() {
 #endif
 }
 
+void generateMaze() {
+  for (int row = 0; row < MAZE_SIZE; ++row) {
+    for (int col = 0; col < MAZE_SIZE; ++col) mazeCells[row][col] = '#';
+    mazeCells[row][MAZE_SIZE] = '\0';
+  }
+
+  // Random depth-first carving visits every room, so start and exit connect.
+  bool visited[4][4] = {};
+  uint8_t stackRow[16] = {0};
+  uint8_t stackCol[16] = {0};
+  const int8_t dRow[] = {-1, 1, 0, 0};
+  const int8_t dCol[] = {0, 0, -1, 1};
+  int top = 0;
+  visited[0][0] = true;
+  mazeCells[1][1] = ' ';
+  while (top >= 0) {
+    int roomRow = stackRow[top];
+    int roomCol = stackCol[top];
+    int choices[4];
+    int count = 0;
+    for (int dir = 0; dir < 4; ++dir) {
+      int nextRow = roomRow + dRow[dir];
+      int nextCol = roomCol + dCol[dir];
+      if (nextRow >= 0 && nextRow < 4 && nextCol >= 0 && nextCol < 4 &&
+          !visited[nextRow][nextCol]) choices[count++] = dir;
+    }
+    if (count == 0) {
+      --top;
+      continue;
+    }
+    int dir = choices[esp_random() % count];
+    int nextRow = roomRow + dRow[dir];
+    int nextCol = roomCol + dCol[dir];
+    mazeCells[1 + 2 * roomRow + dRow[dir]]
+             [1 + 2 * roomCol + dCol[dir]] = ' ';
+    mazeCells[1 + 2 * nextRow][1 + 2 * nextCol] = ' ';
+    visited[nextRow][nextCol] = true;
+    stackRow[++top] = nextRow;
+    stackCol[top] = nextCol;
+  }
+
+  // A couple of loops leave room to dodge the moving sentinel.
+  int added = 0;
+  for (int attempt = 0; attempt < 80 && added < 2; ++attempt) {
+    int row = 1 + esp_random() % 7;
+    int col = 1 + esp_random() % 7;
+    if (mazeCells[row][col] != '#') continue;
+    bool horizontal = row % 2 == 1 && col % 2 == 0 &&
+                      mazeCells[row][col - 1] != '#' &&
+                      mazeCells[row][col + 1] != '#';
+    bool vertical = row % 2 == 0 && col % 2 == 1 &&
+                    mazeCells[row - 1][col] != '#' &&
+                    mazeCells[row + 1][col] != '#';
+    if (horizontal || vertical) {
+      mazeCells[row][col] = ' ';
+      ++added;
+    }
+  }
+  mazeCells[1][1] = 'S';
+  mazeCells[7][7] = 'G';
+}
+
 bool mazeWall(int row, int col) {
   return row < 0 || row >= MAZE_SIZE || col < 0 || col >= MAZE_SIZE ||
-         MAZE_ROWS[row][col] == '#';
+         mazeCells[row][col] == '#';
+}
+
+void placeMazeEnemy() {
+  uint8_t candidatesRow[MAZE_SIZE * MAZE_SIZE];
+  uint8_t candidatesCol[MAZE_SIZE * MAZE_SIZE];
+  int count = 0;
+  for (int row = 1; row < MAZE_SIZE - 1; ++row) {
+    for (int col = 1; col < MAZE_SIZE - 1; ++col) {
+      if (!mazeWall(row, col) && mazeCells[row][col] != 'G' &&
+          abs(row - 1) + abs(col - 1) >= 7) {
+        candidatesRow[count] = row;
+        candidatesCol[count++] = col;
+      }
+    }
+  }
+  enemyRow = enemyCol = -1;
+  if (count > 0) {
+    int pick = esp_random() % count;
+    enemyRow = candidatesRow[pick];
+    enemyCol = candidatesCol[pick];
+  }
+  enemyPrevRow = enemyPrevCol = -1;
+  lastEnemyStep = millis();
+  Serial.printf("Grid Maze generated; sentinel at %d,%d\n", enemyRow, enemyCol);
 }
 
 void drawMazeCell(int row, int col) {
@@ -324,10 +410,10 @@ void drawMazeCell(int row, int col) {
   if (mazeWall(row + 1, col)) gfx->fillRect(x, y + MAZE_CELL - 3, MAZE_CELL, 3, CYAN);
   if (mazeWall(row, col - 1)) gfx->fillRect(x, y, 3, MAZE_CELL, CYAN);
   if (mazeWall(row, col + 1)) gfx->fillRect(x + MAZE_CELL - 3, y, 3, MAZE_CELL, CYAN);
-  if (MAZE_ROWS[row][col] == 'G') {
+  if (mazeCells[row][col] == 'G') {
     gfx->drawCircle(x + 14, y + 14, 10, WHITE);
     gfx->fillCircle(x + 14, y + 14, 7, MAZE_GOLD);
-  } else if (MAZE_ROWS[row][col] == 'S') {
+  } else if (mazeCells[row][col] == 'S') {
     gfx->drawCircle(x + 14, y + 14, 9, BLUE);
   }
 }
@@ -337,6 +423,15 @@ void drawMazePlayer() {
   int y = MAZE_Y + mazeRow * MAZE_CELL + MAZE_CELL / 2;
   gfx->fillCircle(x, y, 10, CYAN);
   gfx->fillCircle(x, y, 6, WHITE);
+}
+
+void drawMazeEnemy() {
+  if (enemyRow < 0) return;
+  int x = MAZE_X + enemyCol * MAZE_CELL + MAZE_CELL / 2;
+  int y = MAZE_Y + enemyRow * MAZE_CELL + MAZE_CELL / 2;
+  gfx->fillRect(x - 9, y - 9, 18, 18, MAZE_ENEMY);
+  gfx->drawRect(x - 10, y - 10, 20, 20, WHITE);
+  gfx->fillRect(x - 3, y - 3, 6, 6, BG);
 }
 
 void drawMazeBurst(int frame) {
@@ -391,13 +486,32 @@ void drawMazeWinMessage() {
   textCentered("MAZE RESTARTING...", 279, 1, MUTED);
 }
 
+void drawMazeCaught() {
+  gfx->fillScreen(BG);
+  gfx->drawCircle(233, 233, 224, MAZE_ENEMY);
+  for (int i = 0; i < 14; ++i) {
+    int x = 95 + (i * 79) % 275;
+    int y = 92 + (i * 113) % 280;
+    gfx->fillRect(x, y, 7, 7, i % 2 ? MAZE_ENEMY : PURPLE);
+  }
+  gfx->fillRoundRect(76, 170, 314, 130, 18, MAZE_WALL);
+  gfx->drawRoundRect(76, 170, 314, 130, 18, MAZE_ENEMY);
+  textCentered("ZAPPED!", 190, 3, WHITE);
+  textCentered("SENTINEL GOT YOU", 241, 2, MAZE_ENEMY);
+  textCentered("NEW GRID INCOMING...", 279, 1, MUTED);
+}
+
 void drawMazeStatus() {
   gfx->fillRect(104, 407, 258, 23, BG);
-  if (imuReady) textCentered("TILT TO MOVE  /  TAP TO NUDGE", 412, 1, MUTED);
-  else textCentered("SENSOR OFFLINE  /  TAP TO MOVE", 412, 1, MAZE_GOLD);
+  if (imuReady) textCentered("DODGE PINK  /  TILT OR TAP", 412, 1, MUTED);
+  else textCentered("DODGE PINK  /  TAP TO MOVE", 412, 1, MAZE_GOLD);
 }
 
 void drawMaze() {
+  if (mazeCaught) {
+    drawMazeCaught();
+    return;
+  }
   if (mazeWon) {
     unsigned long elapsed = millis() - mazeWonAt;
     if (elapsed < MAZE_BURST_MS) drawMazeBurst(elapsed / 120);
@@ -411,32 +525,49 @@ void drawMaze() {
   }
   gfx->drawRect(MAZE_X - 2, MAZE_Y - 2,
                 MAZE_SIZE * MAZE_CELL + 4, MAZE_SIZE * MAZE_CELL + 4, CYAN);
+  drawMazeEnemy();
   drawMazePlayer();
   drawMazeStatus();
 }
 
 void resetMaze() {
+  generateMaze();
+  placeMazeEnemy();
   mazeRow = 1;
   mazeCol = 1;
   mazeWon = false;
+  mazeCaught = false;
   mazeTiltX = mazeTiltY = 0;
   lastMazeStep = 0;
   mazeWonAt = 0;
+  mazeCaughtAt = 0;
   mazeWinFrame = -1;
   screenDirty = true;
+}
+
+void catchMazePlayer() {
+  mazeCaught = true;
+  mazeCaughtAt = millis();
+  Serial.println("Grid Maze: sentinel caught player");
+  drawMazeCaught();
 }
 
 bool stepMaze(int dRow, int dCol) {
   int nextRow = mazeRow + dRow;
   int nextCol = mazeCol + dCol;
-  if (mazeWon || mazeWall(nextRow, nextCol)) return false;
+  if (mazeWon || mazeCaught || mazeWall(nextRow, nextCol)) return false;
   int oldRow = mazeRow;
   int oldCol = mazeCol;
   mazeRow = nextRow;
   mazeCol = nextCol;
-  mazeWon = MAZE_ROWS[mazeRow][mazeCol] == 'G';
+  if (mazeRow == enemyRow && mazeCol == enemyCol) {
+    catchMazePlayer();
+    return true;
+  }
+  mazeWon = mazeCells[mazeRow][mazeCol] == 'G';
   drawMazeCell(oldRow, oldCol);
   drawMazeCell(mazeRow, mazeCol);
+  if (oldRow == enemyRow && oldCol == enemyCol) drawMazeEnemy();
   drawMazePlayer();
   if (mazeWon) {
     Serial.println("Grid Maze cleared");
@@ -465,12 +596,85 @@ void updateMazeCelebration() {
   }
 }
 
+void updateMazeEnemy() {
+  if (enemyRow < 0 || millis() - lastEnemyStep < MAZE_ENEMY_STEP_MS) return;
+  lastEnemyStep = millis();
+  const int8_t dRow[] = {-1, 1, 0, 0};
+  const int8_t dCol[] = {0, 0, -1, 1};
+  int options[4];
+  int count = 0;
+  for (int dir = 0; dir < 4; ++dir) {
+    int row = enemyRow + dRow[dir];
+    int col = enemyCol + dCol[dir];
+    if (!mazeWall(row, col) && mazeCells[row][col] != 'G') options[count++] = dir;
+  }
+  if (count == 0) return;
+
+  // The sentinel follows a clear straight corridor, otherwise it patrols.
+  int chosen = -1;
+  if (enemyRow == mazeRow && abs(enemyCol - mazeCol) <= 5) {
+    int toward = mazeCol > enemyCol ? 1 : -1;
+    bool clear = true;
+    for (int col = enemyCol + toward; col != mazeCol; col += toward) {
+      if (mazeWall(enemyRow, col)) { clear = false; break; }
+    }
+    if (clear) {
+      for (int i = 0; i < count; ++i) {
+        int dir = options[i];
+        if (dRow[dir] == 0 && dCol[dir] == toward) chosen = dir;
+      }
+    }
+  } else if (enemyCol == mazeCol && abs(enemyRow - mazeRow) <= 5) {
+    int toward = mazeRow > enemyRow ? 1 : -1;
+    bool clear = true;
+    for (int row = enemyRow + toward; row != mazeRow; row += toward) {
+      if (mazeWall(row, enemyCol)) { clear = false; break; }
+    }
+    if (clear) {
+      for (int i = 0; i < count; ++i) {
+        int dir = options[i];
+        if (dCol[dir] == 0 && dRow[dir] == toward) chosen = dir;
+      }
+    }
+  }
+  if (chosen < 0) {
+    int patrol[4];
+    int patrolCount = 0;
+    for (int i = 0; i < count; ++i) {
+      int dir = options[i];
+      if (count == 1 || enemyRow + dRow[dir] != enemyPrevRow ||
+          enemyCol + dCol[dir] != enemyPrevCol) patrol[patrolCount++] = dir;
+    }
+    chosen = patrol[esp_random() % patrolCount];
+  }
+
+  int oldRow = enemyRow;
+  int oldCol = enemyCol;
+  enemyRow += dRow[chosen];
+  enemyCol += dCol[chosen];
+  enemyPrevRow = oldRow;
+  enemyPrevCol = oldCol;
+  if (enemyRow == mazeRow && enemyCol == mazeCol) {
+    catchMazePlayer();
+    return;
+  }
+  drawMazeCell(oldRow, oldCol);
+  drawMazeCell(enemyRow, enemyCol);
+  drawMazeEnemy();
+}
+
 void updateMaze() {
   if (screen != GRID_MAZE || !displayReady) return;
+  if (mazeCaught) {
+    if (millis() - mazeCaughtAt >= MAZE_CAUGHT_MS) resetMaze();
+    return;
+  }
   if (mazeWon) {
     updateMazeCelebration();
     return;
   }
+  updateMazeEnemy();
+  if (mazeCaught) return;
   if (!imuReady) return;
   unsigned long now = millis();
   if (now - lastMazeStep < MAZE_STEP_MS) return;
@@ -755,7 +959,7 @@ void handleTap(int x, int y) {
                y >= 347 && y <= 410) {
       startSpin();
     } else if (screen == GRID_MAZE) {
-      if (mazeWon) return;
+      if (mazeWon || mazeCaught) return;
       if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
           y >= MAZE_Y && y < MAZE_Y + MAZE_SIZE * MAZE_CELL) {
         int tapCol = (x - MAZE_X) / MAZE_CELL;

@@ -19,14 +19,16 @@ Settings. Enter up to 16 lines in `Name | Street address` format. Changes are
 saved on Gridley, and the new list is available immediately. Changing the area
 label alone does not discover bars; edit the list as well if changing areas.
 
-**Grid Maze** is a small fixed Tron-style maze. Tilt Gridley to move the glowing
-puck through the cyan corridors to the gold exit. The onboard QMI8658 motion
-sensor drives the puck; tapping the maze nudges it one square in the direction
-you tapped. Downward movement needs a little more tilt, so a normal viewing
-angle is less likely to move the puck. Reaching the exit triggers a short
-pixel-art explosion and congratulations screen, then restarts the maze
-automatically. If the sensor is unavailable, touch control still works. The
-route is fixed in this first version.
+**Grid Maze** creates a new connected Tron-style maze each round. Tilt Gridley
+to move the glowing puck through the cyan corridors to the gold exit while
+avoiding the pink sentinel. It patrols the maze and follows you down clear
+straight corridors. Touching it shows a brief "ZAPPED!" screen, then starts a
+new round. The onboard QMI8658 motion sensor drives the puck; tapping the maze
+nudges it one square in the direction you tapped. Downward movement needs a
+little more tilt, so a normal viewing angle is less likely to move the puck.
+Reaching the exit triggers a short pixel-art explosion and congratulations
+screen, then starts another new maze automatically. If the sensor is
+unavailable, touch control still works.
 
 If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network

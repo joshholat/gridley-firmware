@@ -7,17 +7,22 @@ The home screen is a bright blue perspective-grid app launcher with a large whit
 **GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, and **Settings**. Its prompt is
 "PICK A PROGRAM, USER."
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
-without repeating the immediately previous pick. Its starter list covers bars
-around Chicago 60612. It does not check live hours or automatically search for
-new places. Settings retains the original battery, USB, charging, and Wi-Fi
-status display.
+without repeating the immediately previous pick. Once Gridley joins Wi-Fi, it
+looks up bars and pubs in OpenStreetMap within 3.2 km (about 2 miles) of the
+approximate center of Chicago 60612. It saves up to 16 randomly sampled results
+and refreshes once a day. The saved list keeps the spinner working offline or
+when the public map service is busy. It does not check live hours. Settings
+retains the original battery, USB, charging, and Wi-Fi status display.
 
 Tap a launcher button to open an app and **BACK** to return. Tap **SPIN** or
-**SPIN AGAIN** in the bar app. The bar list and area label can be edited from a
-phone or computer on the same Wi-Fi network: open the IP address shown in
-Settings. Enter up to 16 lines in `Name | Street address` format. Changes are
-saved on Gridley, and the new list is available immediately. Changing the area
-label alone does not discover bars; edit the list as well if changing areas.
+**SPIN AGAIN** in the bar app. From a phone or computer on the same Wi-Fi network,
+open `http://gridley.local/bars` or the IP address shown in Settings. The page
+shows the current bars, their source, and a **Refresh nearby bars now** button.
+It also lets you switch to a custom list of up to 16 lines in
+`Name | Street address` format. Editing that list selects it immediately; the
+OpenStreetMap cache remains available if you switch back. The automatic search
+stays centered on 60612; changing the custom list's area label does not move it.
+Gridley has no GPS, so it does not follow your phone's location.
 
 **Grid Maze** creates a new connected Tron-style maze each round. Tilt Gridley
 to move the glowing puck through the cyan corridors to the gold exit while
@@ -34,7 +39,11 @@ If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network
 name and password appear in Settings. Enter your normal 2.4 GHz Wi-Fi details
 on that page. The bar list can also be edited at http://192.168.4.1/bars.
-Wi-Fi details and the bar list are saved on the board, not in source control.
+Wi-Fi details and both bar lists are saved on the board, not in source control.
+The OpenStreetMap service requires internet access; the setup network alone
+does not provide it. Public Overpass servers may be slow or unavailable, and
+some map entries omit street addresses. Gridley retries failed refreshes after
+an hour and retains the last working list. Data © OpenStreetMap contributors.
 
 When connected, hold the **BOOT** button for three seconds to clear the saved
 Wi-Fi details and show the setup network again.
@@ -91,7 +100,7 @@ The sketch sets the AXP2101 charger to **100 mA, 4.2 V** for the connected
 board's + contact and black wire reaches - before running on or charging
 the battery.
 
-## Starter bar list
+## Offline starter bar list
 
 The initial list contains Cobra Lounge, The Press Room, Inner Town Pub,
 Empty Bottle, and Sportsman's Club. Their locations were checked against
@@ -100,7 +109,9 @@ Empty Bottle, and Sportsman's Club. Their locations were checked against
 [Inner Town Pub](https://www.innertownpub.com/),
 [Empty Bottle](https://www.emptybottle.com/faq), and
 [Sportsman's Club ordering page](https://order.toasttab.com/online/sportsmans-club-948-north-western-avenue).
-The picker is a starting point, not a live recommendation or hours service.
+The starter list is used until an OpenStreetMap refresh succeeds, and remains
+available as the custom list. The picker is not a live recommendation or hours
+service.
 
 ## Backup
 
@@ -114,3 +125,12 @@ private. The file is ignored by Git. Its SHA-256 checksum is in the matching
 The launcher compiled, flashed, and passed upload verification. Its serial
 status reported `Wi-Fi: setup | Battery: 3.97 V | USB: yes | charging: yes`.
 The board was not yet connected to a home Wi-Fi network at this check.
+
+## Live check, 2026-10-22
+
+The OpenStreetMap build compiled at 46% of the program partition, flashed, and
+passed upload verification. Gridley connected to Wi-Fi, and
+`http://gridley.local/bars` served the new page. During this check, the
+Private.coffee Overpass service timed out and the main Overpass service refused
+the connection. Gridley kept its five saved bars and scheduled a later retry.
+A successful live map refresh has not yet been observed on the board.

@@ -196,3 +196,8 @@ from a flick. The game screen calls the BOOT action **PRESS BUTTON**. Its
 countdown now uses sixteen discrete segments so each step clears cleanly.
 Taps outside an app button no longer redraw the launcher or delay the next
 attempt.
+
+On a missed command or timeout, Gridley Says now plays a short pixel-art loss
+animation with a drooping face and falling tears before showing the score and
+Try Again button. The effect renders in a small framebuffer when available to
+keep the animation smooth on the puck's display.

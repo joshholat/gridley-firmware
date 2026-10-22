@@ -199,6 +199,12 @@ uint16_t gridBest = 0;
 uint32_t gridPromptAt = 0;
 uint32_t gridTimeLimit = 3500;
 uint32_t gridFeedbackAt = 0;
+uint32_t gridOverAt = 0;
+constexpr uint32_t GRID_LOSS_FRAME_MS = 120;
+constexpr uint32_t GRID_LOSS_ANIM_MS = 1440;
+int gridLossFrame = -1;
+Arduino_Canvas *gridLossCanvas = nullptr;
+bool gridLossCanvasTried = false;
 uint32_t gridLastMotionPoll = 0;
 uint32_t gridTiltStartedAt = 0;
 uint32_t gridTouchArmedAt = 0;
@@ -1394,6 +1400,59 @@ int gridTimerSegmentsRemaining(uint32_t now) {
          gridTimeLimit;
 }
 
+void drawGridleyLossFrame(int frame) {
+  if (!gridLossCanvasTried && displayReady) {
+    gridLossCanvasTried = true;
+    gridLossCanvas = new Arduino_Canvas(268, 178, gfx, 99, 172);
+    if (!gridLossCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete gridLossCanvas;
+      gridLossCanvas = nullptr;
+      Serial.println("WARNING: Gridley Says animation framebuffer unavailable");
+    }
+  }
+  Arduino_GFX *panel = gridLossCanvas ?
+      static_cast<Arduino_GFX *>(gridLossCanvas) : static_cast<Arduino_GFX *>(gfx);
+  int ox = gridLossCanvas ? 0 : 99;
+  int oy = gridLossCanvas ? 0 : 172;
+  if (gridLossCanvas) panel->fillScreen(BG);
+  else panel->fillRect(ox, oy, 268, 178, BG);
+  panel->fillRoundRect(ox, oy, 268, 178, 16, PANEL);
+  panel->drawRoundRect(ox, oy, 268, 178, 16, MAZE_ENEMY);
+
+  // Falling pixels and a sagging face give the loss screen a small, sad beat.
+  for (int i = 0; i < 8; ++i) {
+    int x = 23 + (i * 59) % 222;
+    int y = 44 + (frame * 9 + i * 23) % 86;
+    int size = 4 + (i % 3) * 2;
+    panel->fillRect(ox + x, oy + y, size, size,
+                    i % 3 == 0 ? CYAN : i % 3 == 1 ? PURPLE : GRID_DIM);
+  }
+  int droop = min(frame, 7) * 2;
+  panel->fillRect(ox + 98, oy + 45 + droop, 72, 82, BG);
+  panel->drawRect(ox + 98, oy + 45 + droop, 72, 82, PURPLE);
+  panel->fillRect(ox + 115, oy + 67 + droop, 9, 7, CYAN);
+  panel->fillRect(ox + 144, oy + 67 + droop, 9, 7, CYAN);
+  int tear = (frame * 7) % 33;
+  panel->fillRect(ox + 119, oy + 80 + droop + tear, 5, 8, BLUE);
+  panel->fillRect(ox + 148, oy + 85 + droop + (tear + 15) % 33, 5, 8, BLUE);
+  panel->fillRect(ox + 116, oy + 107 + droop, 7, 5, MAZE_ENEMY);
+  panel->fillRect(ox + 123, oy + 102 + droop, 7, 5, MAZE_ENEMY);
+  panel->fillRect(ox + 130, oy + 99 + droop, 9, 5, MAZE_ENEMY);
+  panel->fillRect(ox + 139, oy + 102 + droop, 7, 5, MAZE_ENEMY);
+  panel->fillRect(ox + 146, oy + 107 + droop, 7, 5, MAZE_ENEMY);
+
+  panel->setTextSize(3);
+  panel->setTextColor(WHITE);
+  panel->setCursor(ox + 53, oy + 10);
+  panel->print("OH, PUCK.");
+  panel->setTextSize(2);
+  panel->setTextColor(MUTED);
+  panel->setCursor(ox + 68, oy + 149);
+  panel->print("END OF LINE");
+  if (gridLossCanvas) gridLossCanvas->flush();
+  gridLossFrame = frame;
+}
+
 void drawGridleySays() {
   chrome("GRIDLEY SAYS");
   textCentered("SCORE " + String(gridScore) + "  /  BEST " + String(gridBest),
@@ -1420,9 +1479,14 @@ void drawGridleySays() {
     textCentered("NICE MOVE", 215, 3, CYAN);
     textCentered("NEXT COMMAND...", 270, 2, WHITE);
   } else {
-    textCentered("GRID OVER", 205, 3, MAZE_ENEMY);
-    textCentered("SCORE " + String(gridScore), 263, 2, WHITE);
-    button(101, 352, 264, 55, "TRY AGAIN", PURPLE);
+    uint32_t elapsed = millis() - gridOverAt;
+    if (elapsed < GRID_LOSS_ANIM_MS) {
+      drawGridleyLossFrame(elapsed / GRID_LOSS_FRAME_MS);
+    } else {
+      textCentered("GRID OVER", 205, 3, MAZE_ENEMY);
+      textCentered("SCORE " + String(gridScore), 263, 2, WHITE);
+      button(101, 352, 264, 55, "TRY AGAIN", PURPLE);
+    }
   }
   textCentered("< BACK TO THE GRID", 423, 1, MUTED);
 }
@@ -1480,6 +1544,8 @@ void startGridleySays() {
 
 void finishGridleySays() {
   gridPhase = GRID_OVER;
+  gridOverAt = millis();
+  gridLossFrame = -1;
   if (gridScore > gridBest) {
     gridBest = gridScore;
     settings.putUShort("gridBest", gridBest);
@@ -1504,6 +1570,19 @@ void gridleyInput(GridMove input) {
 void updateGridleySays() {
   if (screen != GRIDLEY_SAYS || !displayReady) return;
   uint32_t now = millis();
+  if (gridPhase == GRID_OVER) {
+    uint32_t elapsed = now - gridOverAt;
+    if (elapsed >= GRID_LOSS_ANIM_MS) {
+      if (gridLossFrame != 100) {
+        gridLossFrame = 100;
+        screenDirty = true;
+      }
+    } else {
+      int frame = elapsed / GRID_LOSS_FRAME_MS;
+      if (frame != gridLossFrame && !screenDirty) drawGridleyLossFrame(frame);
+    }
+    return;
+  }
   if (gridPhase == GRID_SUCCESS) {
     if (now - gridFeedbackAt >= 480) nextGridleyCommand();
     return;

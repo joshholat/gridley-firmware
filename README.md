@@ -14,13 +14,14 @@ Tap a launcher button to open a program and **BACK** to return.
 **Grid Maze** creates a new connected Tron-style maze each round. Tilt Gridley
 to move the glowing puck through the cyan corridors to the gold exit while
 avoiding the pink sentinel. It patrols the maze and follows you down clear
-straight corridors. Touching it shows a brief "ZAPPED!" screen, then starts a
-new round. The onboard QMI8658 motion sensor drives the puck; tapping the maze
-nudges it one square in the direction you tapped. Downward movement needs a
+straight corridors. Touching it plays a descending sound and shows a brief
+"ZAPPED!" screen, then starts a new round. The onboard QMI8658 motion sensor
+drives the puck; tapping the maze nudges it one square in the direction you
+tapped. Downward movement needs a
 little more tilt, so a normal viewing angle is less likely to move the puck.
-Reaching the exit triggers a short pixel-art explosion and congratulations
-screen, then starts another new maze automatically. If the sensor is
-unavailable, touch control still works.
+Reaching the exit triggers an ascending sound, a short pixel-art explosion,
+and a congratulations screen, then starts another new maze automatically. If
+the sensor is unavailable, touch control still works.
 
 **Gridley Says** is a quick reaction game inspired by physical command toys.
 Follow each randomly chosen command before the timer runs out: shake the puck,
@@ -33,11 +34,14 @@ starting angle between tilt commands. The BOOT button still clears Wi-Fi after
 a three-second hold, even while this game is open.
 
 **Disc Defender** is a quick arcade game about protecting the glowing core.
-Twist the puck to move the shield around its ring, then tap the touchscreen or
-press BOOT to parry an incoming pink shot. Precise parries earn three points;
-other catches earn one. Build a streak, protect three hit points, and beat the
-saved high score. The speaker makes short arcade tones on hits and parries.
-If the gyroscope is unavailable, touch near the outer ring to aim.
+Twist the puck to move the bright shield arc around its ring. The arc blocks
+pink shots automatically when they reach it, earning one point. Tap the
+touchscreen or press BOOT as a shot approaches to briefly power up the arc;
+a well-aimed boosted block earns three points. Shots that miss the arc keep
+moving toward the core and cost a hit point if they reach it. Build a streak,
+protect three hit points, and beat the saved high score. The speaker makes
+short arcade tones for blocks and core hits. If the gyroscope is unavailable,
+touch near the outer ring to aim.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and

@@ -181,6 +181,7 @@ uint16_t discScore = 0;
 uint16_t discBest = 0;
 uint16_t discStreak = 0;
 uint8_t discLives = 3;
+uint16_t discShotNumber = 0;
 float discShieldAngle = -PI / 2;
 float discShotAngle = -PI / 2;
 float discShotRadius = 120;
@@ -190,11 +191,16 @@ uint32_t discLastFrameAt = 0;
 uint32_t discNextShotAt = 0;
 uint32_t discFeedbackUntil = 0;
 uint8_t discFeedback = 0;
+uint32_t discParryArmedUntil = 0;
 Arduino_Canvas *discCanvas = nullptr;
 bool discCanvasTried = false;
-uint32_t discTonePhase = 0;
-uint32_t discToneStep = 0;
-uint32_t discToneFramesLeft = 0;
+uint32_t gameTonePhase = 0;
+uint32_t gameToneStep = 0;
+uint32_t gameToneFramesLeft = 0;
+uint8_t mazeSoundKind = 0;
+uint8_t mazeSoundNote = 0;
+
+void playMazeSound(bool won);
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -647,6 +653,7 @@ void catchMazePlayer() {
   mazeCaught = true;
   mazeCaughtAt = millis();
   Serial.println("Grid Maze: sentinel caught player");
+  playMazeSound(false);
   drawMazeCaught();
 }
 
@@ -671,6 +678,7 @@ bool stepMaze(int dRow, int dCol) {
     Serial.println("Grid Maze cleared");
     mazeWonAt = millis();
     mazeWinFrame = 0;
+    playMazeSound(true);
     drawMazeBurst(0);
   }
   return true;
@@ -1035,7 +1043,8 @@ void playAudioClip() {
     return;
   }
   audioOffset = 0;
-  discToneFramesLeft = 0;
+  gameToneFramesLeft = 0;
+  mazeSoundKind = 0;
   audioPowerDownAt = 0;
   audioPlaying = true;
   digitalWrite(AUDIO_PA, HIGH);
@@ -1045,13 +1054,40 @@ void playAudioClip() {
 #endif
 }
 
-void playDiscTone(uint16_t frequency, uint16_t durationMs) {
+void startGameTone(uint16_t frequency, uint16_t durationMs) {
   if (!audioReady || !audioVolume || micActive || audioPlaying) return;
-  discTonePhase = 0;
-  discToneStep = (static_cast<uint64_t>(frequency) << 32) / AUDIO_SAMPLE_RATE;
-  discToneFramesLeft = AUDIO_SAMPLE_RATE * durationMs / 1000;
+  gameTonePhase = 0;
+  gameToneStep = (static_cast<uint64_t>(frequency) << 32) / AUDIO_SAMPLE_RATE;
+  gameToneFramesLeft = AUDIO_SAMPLE_RATE * durationMs / 1000;
   audioPowerDownAt = 0;
   digitalWrite(AUDIO_PA, HIGH);
+}
+
+void playDiscTone(uint16_t frequency, uint16_t durationMs) {
+  mazeSoundKind = 0;
+  startGameTone(frequency, durationMs);
+}
+
+void advanceMazeSound() {
+  const uint16_t winNotes[] = {523, 659, 784};
+  const uint16_t loseNotes[] = {350, 260, 160};
+  const uint16_t winLengths[] = {90, 90, 210};
+  const uint16_t loseLengths[] = {120, 130, 240};
+  if (mazeSoundNote >= 3) {
+    mazeSoundKind = 0;
+    audioPowerDownAt = millis() + 100;
+    return;
+  }
+  int note = mazeSoundNote++;
+  startGameTone(mazeSoundKind == 1 ? winNotes[note] : loseNotes[note],
+                mazeSoundKind == 1 ? winLengths[note] : loseLengths[note]);
+}
+
+void playMazeSound(bool won) {
+  if (!audioReady || !audioVolume || micActive || audioPlaying) return;
+  mazeSoundKind = won ? 1 : 2;
+  mazeSoundNote = 0;
+  advanceMazeSound();
 }
 
 void pumpAudio() {
@@ -1067,21 +1103,23 @@ void pumpAudio() {
     }
   }
 #endif
-  if (!audioPlaying && discToneFramesLeft) {
+  if (!audioPlaying && gameToneFramesLeft) {
     int16_t samples[256 * 2];
-    uint32_t frames = min(discToneFramesLeft, uint32_t(256));
+    uint32_t frames = min(gameToneFramesLeft, uint32_t(256));
     for (uint32_t i = 0; i < frames; ++i) {
-      int16_t level = min(discToneFramesLeft - i, uint32_t(64)) * 70;
-      int16_t sample = discTonePhase & 0x80000000 ? level : -level;
+      int16_t level = min(gameToneFramesLeft - i, uint32_t(64)) * 70;
+      int16_t sample = gameTonePhase & 0x80000000 ? level : -level;
       samples[i * 2] = sample;
       samples[i * 2 + 1] = sample;
-      discTonePhase += discToneStep;
+      gameTonePhase += gameToneStep;
     }
     size_t written = audioI2S.write(reinterpret_cast<uint8_t *>(samples),
                                     frames * 4);
-    discToneFramesLeft -= min(frames, static_cast<uint32_t>(written / 4));
-    if (!discToneFramesLeft) audioPowerDownAt = millis() + 100;
+    gameToneFramesLeft -= min(frames, static_cast<uint32_t>(written / 4));
+    if (!gameToneFramesLeft) audioPowerDownAt = millis() + 100;
   }
+  if (!audioPlaying && !gameToneFramesLeft && mazeSoundKind)
+    advanceMazeSound();
   if (audioPowerDownAt &&
       static_cast<int32_t>(millis() - audioPowerDownAt) >= 0) {
     digitalWrite(AUDIO_PA, LOW);
@@ -1410,10 +1448,11 @@ float discAngleDistance(float a, float b) {
 }
 
 void spawnDiscShot() {
-  discShotAngle = discScore == 0 ? -PI / 2 :
+  discShotAngle = discShotNumber++ == 0 ? -PI / 2 :
       (esp_random() % 6283) / 1000.0f - PI;
   discShotRadius = 112;
   discShotActive = true;
+  discParryArmedUntil = 0;
 }
 
 void startDiscDefender() {
@@ -1421,9 +1460,11 @@ void startDiscDefender() {
   discScore = 0;
   discStreak = 0;
   discLives = 3;
+  discShotNumber = 0;
   discShieldAngle = -PI / 2;
   discFeedback = 0;
   discFeedbackUntil = 0;
+  discParryArmedUntil = 0;
   discLastUpdateAt = millis();
   discLastFrameAt = 0;
   spawnDiscShot();
@@ -1451,24 +1492,16 @@ void discParry(int x, int y) {
       discShieldAngle = atan2f(dy, dx);
   }
   uint32_t now = millis();
-  float angleError = discAngleDistance(discShieldAngle, discShotAngle);
-  float radiusError = fabsf(discShotRadius - 89);
-  if (discShotActive && radiusError <= 20 && angleError <= 0.39f) {
-    bool perfect = radiusError <= 9 && angleError <= 0.16f;
-    discScore += perfect ? 3 : 1;
-    ++discStreak;
-    discShotActive = false;
-    discNextShotAt = now + 400;
-    discFeedback = perfect ? 2 : 1;
+  if (!discShotActive) return;
+  if (discShotRadius <= 89) {
+    discFeedback = 5;
     discFeedbackUntil = now + 350;
-    playDiscTone(perfect ? 880 : 620, perfect ? 150 : 100);
-    Serial.printf("Disc Defender %s: score %u, streak %u\n",
-                  perfect ? "perfect" : "parry", discScore, discStreak);
-    screenDirty = true;
-  } else if (discShotActive) {
-    discFeedback = 4;
-    discFeedbackUntil = now + 260;
+    return;
   }
+  discParryArmedUntil = now + 1100;
+  discFeedback = 4;
+  discFeedbackUntil = now + 320;
+  playDiscTone(430, 45);
 }
 
 void drawDiscFrame() {
@@ -1501,12 +1534,17 @@ void drawDiscFrame() {
   field->fillCircle(cx, cy, 23, PANEL);
   field->drawCircle(cx, cy, 23, CYAN);
   field->fillCircle(cx, cy, 7, WHITE);
+  field->setTextSize(1);
+  field->setTextColor(MUTED);
+  field->setCursor(cx - 12, cy + 28);
+  field->print("CORE");
 
+  bool parryArmed = discParryArmedUntil && millis() < discParryArmedUntil;
   for (int step = -6; step <= 6; ++step) {
     float angle = discShieldAngle + step * 0.055f;
     field->fillCircle(cx + cosf(angle) * 89,
                       cy + sinf(angle) * 89, 5,
-                      abs(step) < 3 ? WHITE : CYAN);
+                      parryArmed ? MAZE_GOLD : abs(step) < 3 ? WHITE : CYAN);
   }
 
   if (discShotActive) {
@@ -1522,8 +1560,9 @@ void drawDiscFrame() {
   }
   if (discFeedback && millis() < discFeedbackUntil) {
     const char *label = discFeedback == 2 ? "PERFECT +3" :
-                        discFeedback == 1 ? "PARRY +1" :
-                        discFeedback == 3 ? "CORE HIT" : "AIM + TIME";
+                        discFeedback == 1 ? "BLOCK +1" :
+                        discFeedback == 3 ? "CORE HIT" :
+                        discFeedback == 4 ? "PARRY READY" : "SHOT PASSED";
     int width = strlen(label) * 12;
     field->fillRoundRect(cx - width / 2 - 12, cy - 13,
                          width + 24, 29, 8, PANEL);
@@ -1540,9 +1579,9 @@ void drawDiscDefender() {
   chrome("DISC DEFENDER");
   if (discPhase == DISC_READY) {
     textCentered("DEFEND THE CORE", 198, 2, WHITE);
-    textCentered(gyroReady ? "TWIST TO AIM" : "TOUCH EDGE TO AIM",
+    textCentered(gyroReady ? "TWIST ARC TO BLOCK" : "TOUCH EDGE TO AIM",
                  237, 2, CYAN);
-    textCentered("TAP OR BUTTON TO PARRY", 266, 2, WHITE);
+    textCentered("TAP/BUTTON: BONUS PARRY", 266, 2, WHITE);
     textCentered("THREE HITS TO LOSE", 292, 2, MUTED);
     button(101, 352, 264, 55, "START", CYAN);
   } else if (discPhase == DISC_OVER) {
@@ -1554,7 +1593,7 @@ void drawDiscDefender() {
     textCentered("SCORE " + String(discScore) + "   HP " + String(discLives),
                  139, 2, WHITE);
     drawDiscFrame();
-    textCentered("STREAK " + String(discStreak) + "  /  TWIST + TAP",
+    textCentered("STREAK " + String(discStreak) + "  /  ARC BLOCKS  /  TAP BOOSTS",
                  423, 1, MUTED);
   }
   if (discPhase != DISC_PLAYING)
@@ -1575,7 +1614,30 @@ void updateDiscDefender() {
   }
   if (discShotActive) {
     float speed = 31 + min(discScore, uint16_t(20)) * 0.7f;
+    float previousRadius = discShotRadius;
     discShotRadius -= speed * seconds;
+    if (previousRadius > 89 && discShotRadius <= 89) {
+      float angleError = discAngleDistance(discShieldAngle, discShotAngle);
+      if (angleError <= 0.39f) {
+        bool perfect = discParryArmedUntil && now <= discParryArmedUntil &&
+                       angleError <= 0.23f;
+        discScore += perfect ? 3 : 1;
+        ++discStreak;
+        discShotActive = false;
+        discParryArmedUntil = 0;
+        discNextShotAt = now + 450;
+        discFeedback = perfect ? 2 : 1;
+        discFeedbackUntil = now + 380;
+        playDiscTone(perfect ? 880 : 620, perfect ? 150 : 100);
+        Serial.printf("Disc Defender %s: score %u, streak %u\n",
+                      perfect ? "perfect" : "block", discScore, discStreak);
+        screenDirty = true;
+        return;
+      }
+      discParryArmedUntil = 0;
+      discFeedback = 5;
+      discFeedbackUntil = now + 350;
+    }
     if (discShotRadius <= 28) {
       discShotActive = false;
       discStreak = 0;

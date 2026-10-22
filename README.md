@@ -39,10 +39,10 @@ unavailable, touch control still works.
 
 **Gridley Says** is a quick reaction game inspired by physical command toys.
 Follow each randomly chosen command before the timer runs out: shake the puck,
-flick your wrist, tilt left or right, tap or swipe the touchscreen, or press BOOT
-once. The commands get faster as your score rises; your best score is saved on
-the device. Shake and tilt use the accelerometer, while flick reads the
-gyroscope. Tap **START** or briefly press BOOT to play. A wrong touch or button
+twist the puck quickly, tilt left or right and hold briefly, tap or swipe the
+touchscreen, or press the BOOT button once. The commands get faster as your
+score rises, and your best score is saved on the device. Shake and tilt use the
+accelerometer; the quick twist uses the gyroscope. Tap **START** or briefly press BOOT to play. A wrong touch or button
 press ends the round, and a missed motion times out. Return the puck toward its
 starting angle between tilt commands. The BOOT button still clears Wi-Fi after
 a three-second hold, even while this game is open.
@@ -189,3 +189,7 @@ touchscreen tap and swipe, and BOOT button commands. It compiled at 47% of the
 program partition, flashed with verification, and booted with the accelerometer,
 gyroscope, speaker, and Wi-Fi ready. Timing and thresholds are initial values
 for play testing and may need adjustment based on how the puck feels in hand.
+
+The flick command now requires a fast twist around the screen's face, while
+left and right tilts must be held briefly. This separates a quick right lean
+from a flick. The game screen calls the BOOT action **PRESS BUTTON**.

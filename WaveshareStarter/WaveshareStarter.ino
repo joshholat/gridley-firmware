@@ -200,6 +200,7 @@ uint32_t gridPromptAt = 0;
 uint32_t gridTimeLimit = 3500;
 uint32_t gridFeedbackAt = 0;
 uint32_t gridLastMotionPoll = 0;
+uint32_t gridTiltStartedAt = 0;
 uint32_t gridTouchArmedAt = 0;
 uint32_t gridLastTouchPoll = 0;
 uint32_t gridLastTouchSeen = 0;
@@ -1361,7 +1362,7 @@ const char *gridMoveLabel(GridMove move) {
     case GRID_TILT_RIGHT: return "TILT RIGHT";
     case GRID_TAP: return "TAP IT";
     case GRID_SWIPE: return "SWIPE IT";
-    case GRID_PRESS: return "PRESS BOOT";
+    case GRID_PRESS: return "PRESS BUTTON";
   }
   return "MOVE IT";
 }
@@ -1369,12 +1370,12 @@ const char *gridMoveLabel(GridMove move) {
 const char *gridMoveHint(GridMove move) {
   switch (move) {
     case GRID_SHAKE: return "QUICK BACK-AND-FORTH";
-    case GRID_FLICK: return "SNAP YOUR WRIST";
-    case GRID_TILT_LEFT: return "LEAN THE SCREEN LEFT";
-    case GRID_TILT_RIGHT: return "LEAN THE SCREEN RIGHT";
+    case GRID_FLICK: return "TWIST THE PUCK QUICKLY";
+    case GRID_TILT_LEFT: return "LEAN LEFT AND HOLD";
+    case GRID_TILT_RIGHT: return "LEAN RIGHT AND HOLD";
     case GRID_TAP: return "TOUCH THE SCREEN";
     case GRID_SWIPE: return "DRAG ACROSS THE SCREEN";
-    case GRID_PRESS: return "ONE SHORT SIDE PRESS";
+    case GRID_PRESS: return "ONE SHORT BUTTON PRESS";
   }
   return "FOLLOW THE GRID";
 }
@@ -1442,6 +1443,7 @@ void nextGridleyCommand() {
   gridTimeLimit = max(1700, 3500 - static_cast<int>(gridScore) * 100);
   gridTouchArmedAt = gridPromptAt + 260;
   gridLastMotionPoll = 0;
+  gridTiltStartedAt = 0;
   gridLastAccelValid = false;
   gridLastTimerWidth = -1;
   if (imuReady) {
@@ -1528,16 +1530,22 @@ void updateGridleySays() {
   if (now - gridPromptAt < 260) return;
   if (gridMove == GRID_SHAKE && dx * dx + dy * dy + dz * dz > 0.65f * 0.65f) {
     gridleyInput(GRID_SHAKE);
-  } else if (gridMove == GRID_TILT_LEFT && ay - gridBaseY < -0.38f) {
-    gridleyInput(GRID_TILT_LEFT);
-  } else if (gridMove == GRID_TILT_RIGHT && ay - gridBaseY > 0.38f) {
-    gridleyInput(GRID_TILT_RIGHT);
+  } else if (gridMove == GRID_TILT_LEFT || gridMove == GRID_TILT_RIGHT) {
+    float lean = ay - gridBaseY;
+    bool inDirection = gridMove == GRID_TILT_LEFT ? lean < -0.38f :
+                                                   lean > 0.38f;
+    if (!inDirection) gridTiltStartedAt = 0;
+    else if (!gridTiltStartedAt) gridTiltStartedAt = now;
+    else if (now - gridTiltStartedAt >= 180) gridleyInput(gridMove);
   } else if (gridMove == GRID_FLICK && gyroReady) {
+    // A flick is a quick twist around the screen's normal. A sideways lean
+    // mainly turns the other axes and should not complete this command.
     GyroscopeData gyro;
-    if (imu.readGyro(gyro) &&
-        (fabsf(gyro.dps.x) > 180 || fabsf(gyro.dps.y) > 180 ||
-         fabsf(gyro.dps.z) > 180)) {
-      gridleyInput(GRID_FLICK);
+    if (imu.readGyro(gyro)) {
+      float twist = fabsf(gyro.dps.z);
+      float leanRate = max(fabsf(gyro.dps.x), fabsf(gyro.dps.y));
+      if (twist > 200 && twist > leanRate * 1.25f)
+        gridleyInput(GRID_FLICK);
     }
   }
 }

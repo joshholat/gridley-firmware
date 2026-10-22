@@ -179,6 +179,7 @@ float soundBars[SOUND_BARS] = {};
 float soundLevel = 0;
 float soundNoiseFloor = 0;
 float soundPulse = 0;
+float soundDbFs = -90;
 unsigned long lastSoundFrame = 0;
 unsigned long lastSoundLog = 0;
 uint32_t soundFrameCount = 0;
@@ -531,20 +532,25 @@ void drawLauncher() {
   headlineCentered("GRIDLEY", 63);
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
-  button(84, 143, 298, 51, "CHICAGO SPINNER", CYAN);
-  button(84, 201, 298, 51, "GRID MAZE", MAZE_GOLD);
-  button(84, 259, 298, 51, "SOUND GRID", BLUE);
-  button(84, 317, 298, 51, "SETTINGS", PURPLE);
-#if HAS_AUDIO_CLIP
-  textCentered("BOOT x2: PLAY SOUND", 385, 1, MUTED);
-#endif
+  button(84, 151, 298, 54, "CHICAGO SPINNER", CYAN);
+  button(84, 217, 298, 54, "GRID MAZE", MAZE_GOLD);
+  button(84, 283, 298, 54, "SOUND GRID", BLUE);
+  // Settings is a small utility control below the three programs. Its solid
+  // backing clears the perspective lines so the label stays legible.
+  gfx->fillRoundRect(153, 386, 160, 44, 20, BG);
+  gfx->drawRoundRect(153, 386, 160, 44, 20, PURPLE);
+  gfx->drawCircle(178, 408, 8, PURPLE);
+  gfx->fillCircle(178, 408, 3, PURPLE);
+  gfx->setTextColor(PURPLE);
+  gfx->setTextSize(2);
+  gfx->setCursor(196, 400);
+  gfx->print("SETTINGS");
 }
 
 void drawSoundArt() {
   chrome("SOUND GRID");
   textCentered(micActive ? "MIC LIVE" : "MIC UNAVAILABLE", 145, 1,
                micActive ? CYAN : MAZE_ENEMY);
-  if (micActive) textCentered("MAKE SOME NOISE", 403, 1, MUTED);
   lastSoundFrame = 0;
 }
 
@@ -552,7 +558,7 @@ void drawSoundArtFrame() {
   // Keep the app title and BACK button intact while refreshing the art.
   gfx->fillRect(99, 161, 268, 229, BG);
   const int centerX = 233;
-  const int centerY = 269;
+  const int centerY = 271;
   for (int radius = 48; radius <= 96; radius += 24) {
     gfx->drawCircle(centerX, centerY, radius, MAZE_GRID);
   }
@@ -563,22 +569,31 @@ void drawSoundArtFrame() {
     float angle = rotation + i * (2.0f * PI / SOUND_BARS);
     float dx = cosf(angle);
     float dy = sinf(angle);
-    float reach = 78 + 22 * soundBars[i] + 8 * soundPulse;
-    int x1 = centerX + static_cast<int>(dx * 70);
-    int y1 = centerY + static_cast<int>(dy * 70);
+    float reach = 72 + 28 * soundBars[i] + 10 * soundPulse;
+    int x1 = centerX + static_cast<int>(dx * 64);
+    int y1 = centerY + static_cast<int>(dy * 64);
     int x2 = centerX + static_cast<int>(dx * reach);
     int y2 = centerY + static_cast<int>(dy * reach);
     uint16_t color = i % 4 == 0 ? WHITE : i % 2 == 0 ? PURPLE : CYAN;
     gfx->drawLine(x1, y1, x2, y2, color);
     gfx->fillCircle(x2, y2, soundBars[i] > 0.55f ? 3 : 2, color);
   }
-  int outerRadius = 57 + static_cast<int>(soundLevel * 10 + soundPulse * 5);
+  int outerRadius = 51 + static_cast<int>(soundLevel * 20 + soundPulse * 8);
   gfx->drawCircle(centerX, centerY, outerRadius, pulseColor);
   gfx->drawCircle(centerX, centerY, outerRadius - 2, BLUE);
-  gfx->fillCircle(centerX, centerY, 34 + static_cast<int>(soundLevel * 6), PANEL);
-  gfx->drawCircle(centerX, centerY, 33 + static_cast<int>(soundLevel * 6), CYAN);
-  gfx->fillCircle(centerX, centerY, 13 + static_cast<int>(soundLevel * 7),
+  gfx->fillCircle(centerX, centerY, 30 + static_cast<int>(soundLevel * 12), PANEL);
+  gfx->drawCircle(centerX, centerY, 29 + static_cast<int>(soundLevel * 12), CYAN);
+  gfx->fillCircle(centerX, centerY, 12 + static_cast<int>(soundLevel * 12),
                   soundPulse > 0.5f ? WHITE : CYAN);
+  gfx->fillRoundRect(137, 395, 192, 31, 12, BG);
+  gfx->drawRoundRect(137, 395, 192, 31, 12, BLUE);
+  char levelText[20];
+  snprintf(levelText, sizeof(levelText), "MIC %d dBFS",
+           static_cast<int>(roundf(soundDbFs)));
+  gfx->setTextColor(WHITE);
+  gfx->setTextSize(2);
+  gfx->setCursor((LCD_WIDTH - static_cast<int>(strlen(levelText)) * 12) / 2, 402);
+  gfx->print(levelText);
   ++soundFrameCount;
 }
 
@@ -1130,6 +1145,7 @@ bool startSoundArt() {
   micActive = true;
   soundNoiseFloor = 0;
   soundLevel = soundPulse = 0;
+  soundDbFs = -90;
   memset(soundBars, 0, sizeof(soundBars));
   soundFrameCount = 0;
   lastSoundLog = 0;
@@ -1172,14 +1188,17 @@ void updateSoundArt() {
   bool useRight = energyRight > energyLeft;
   float rms = sqrtf(static_cast<float>(useRight ? energyRight : energyLeft) /
                     SOUND_FRAMES);
+  soundDbFs = max(-90.0f, 20.0f * log10f(max(rms, 1.0f) / 32768.0f));
   if (soundNoiseFloor == 0) soundNoiseFloor = rms;
   else if (rms < soundNoiseFloor)
     soundNoiseFloor = soundNoiseFloor * 0.94f + rms * 0.06f;
   else
     soundNoiseFloor = soundNoiseFloor * 0.997f + rms * 0.003f;
-  float target = constrain((rms - soundNoiseFloor * 1.35f) /
-                               (soundNoiseFloor * 5.0f + 180.0f), 0.0f, 1.0f);
-  if (target > 0.22f && target > soundLevel * 1.6f) soundPulse = 1.0f;
+  float relative = (rms - soundNoiseFloor * 1.05f) /
+                   (soundNoiseFloor * 0.8f + 25.0f);
+  float absolute = (soundDbFs + 60.0f) / 21.0f;
+  float target = constrain(max(relative, absolute), 0.0f, 1.0f);
+  if (target > 0.20f && target > soundLevel * 1.35f) soundPulse = 1.0f;
   else soundPulse *= 0.84f;
   soundLevel = target > soundLevel ? soundLevel * 0.45f + target * 0.55f :
                                     soundLevel * 0.83f + target * 0.17f;
@@ -1190,16 +1209,18 @@ void updateSoundArt() {
       int value = abs(static_cast<int>(micSamples[index * 2 + (useRight ? 1 : 0)]));
       if (value > peak) peak = value;
     }
-    float height = constrain((peak - soundNoiseFloor * 1.6f) /
-                                 (soundNoiseFloor * 8.0f + 400.0f), 0.0f, 1.0f);
+    float height = constrain((peak - soundNoiseFloor * 1.8f) /
+                                 (soundNoiseFloor * 3.0f + 75.0f), 0.0f, 1.0f);
+    height = max(height, target * 0.30f);
     soundBars[bar] = height > soundBars[bar] ?
         soundBars[bar] * 0.35f + height * 0.65f :
         soundBars[bar] * 0.70f + height * 0.30f;
   }
   drawSoundArtFrame();
   if (now - lastSoundLog > 1000) {
-    Serial.printf("Sound Grid: rms %.0f, floor %.0f, level %.2f, channel %c\n",
-                  rms, soundNoiseFloor, soundLevel, useRight ? 'R' : 'L');
+    Serial.printf("Sound Grid: rms %.0f, floor %.0f, %.0f dBFS, level %.2f, channel %c\n",
+                  rms, soundNoiseFloor, soundDbFs, soundLevel,
+                  useRight ? 'R' : 'L');
     lastSoundLog = now;
   }
 }
@@ -1331,14 +1352,14 @@ void updateSpin() {
 
 void handleTap(int x, int y) {
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 143 && y <= 194) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 201 && y <= 252) {
+    if (x >= 84 && x <= 382 && y >= 151 && y <= 205) screen = NIGHT_SPINNER;
+    else if (x >= 84 && x <= 382 && y >= 217 && y <= 271) {
       resetMaze();
       screen = GRID_MAZE;
-    } else if (x >= 84 && x <= 382 && y >= 259 && y <= 310) {
+    } else if (x >= 84 && x <= 382 && y >= 283 && y <= 337) {
       startSoundArt();
       screen = SOUND_ART;
-    } else if (x >= 84 && x <= 382 && y >= 317 && y <= 368) {
+    } else if (x >= 148 && x <= 318 && y >= 381 && y <= 435) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
       screen = STATUS_SETTINGS;

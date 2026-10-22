@@ -6,6 +6,7 @@ aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 The home screen is a bright blue perspective-grid app launcher with a large white
 **GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, **Sound Grid**, and **Settings**. Its prompt is
 "PICK A PROGRAM, USER."
+Settings appears as a smaller utility button below the three programs.
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
 without repeating the immediately previous pick. Once Gridley joins Wi-Fi, it
 looks up bars and pubs in OpenStreetMap within 3.2 km (about 2 miles) of the
@@ -40,7 +41,9 @@ The spokes, central orb, and color pulses react to nearby voices, music, and
 other sounds. It adjusts to the room's background noise automatically. The
 microphones are sampled only while Sound Grid is open; tap **BACK** to stop
 listening. The artwork runs entirely on the puck without Wi-Fi or a cloud
-service and does not save or transmit audio.
+service and does not save or transmit audio. Its live **dBFS** number measures
+the microphone signal relative to digital full scale: values closer to 0 mean
+louder sound. It is not a calibrated environmental dB SPL meter.
 
 If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network
@@ -153,3 +156,11 @@ and the artwork's level rose to 1.0. The final launcher build then flashed and
 passed upload verification. Its serial status showed Wi-Fi connected, speaker
 ready, and 4.14 V battery voltage. The display artwork was not visually
 inspected from a camera during this check.
+
+## Sensitivity and launcher update, 2026-10-22
+
+The Sound Grid sensitivity was increased for nearby speech, and the artwork
+now shows live microphone dBFS. The three programs were regrouped above a
+smaller Settings utility button with an opaque background. In a low-volume
+onboard playback check, roughly -56 to -54 dBFS produced a visible artwork
+level of about 0.25 to 0.56, while quiet readings near -60 dBFS stayed low.

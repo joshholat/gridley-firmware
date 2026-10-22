@@ -19,8 +19,9 @@ straight corridors. Touching it plays a descending sound and shows a brief
 drives the puck; tapping the maze nudges it one square in the direction you
 tapped. Press BOOT to fire an EMP pulse that sends the sentinel to a distant
 part of the maze and stuns it briefly. The pulse recharges in seven seconds;
-the remaining time appears below the maze. Downward movement needs a little
-more tilt, so a normal viewing angle is less likely to move the puck.
+the remaining time appears in a bright badge below the maze. Downward
+movement needs a little more tilt, so a normal viewing angle is less likely
+to move the puck.
 Reaching the exit triggers an ascending sound, a short pixel-art explosion,
 and a congratulations screen, then starts another new maze automatically. If
 the sensor is unavailable, touch control still works.
@@ -36,16 +37,18 @@ starting angle between tilt commands. The BOOT button still clears Wi-Fi after
 a three-second hold, even while this game is open.
 
 **Disc Defender** is a quick arcade game about protecting the glowing core.
-Twist the puck, or touch and drag around the ring, to move the bright shield
-arc all the way around the core. Turning the puck moves the arc three times as
-far, making the lower half easier to reach. The arc blocks pink shots
-automatically when they reach it, earning one point. Press BOOT or tap the
-center core as a shot approaches to charge the shield briefly; a well-aimed
+Tilt the puck left or right to spin the bright shield arc continuously in
+either direction around the core. Touch or drag around the ring to put the arc
+at a specific spot. Tilt steering stops while a finger is on the ring, so the
+two controls do not fight each other. The pink shots now approach more slowly
+to leave time to aim. The arc blocks them automatically when they reach it,
+earning one point. Press BOOT or tap the center core as a shot approaches to
+charge the shield briefly; a well-aimed
 charged block earns three points. This is a shield boost, not a shot. Pink
 shots that miss the arc keep moving toward the core and cost a hit point if
 they reach it. Build a streak, protect three hit points, and beat the saved
 high score. The speaker makes short arcade tones for blocks and core hits.
-Touch aiming works even if the gyroscope is unavailable.
+Touch aiming works even if the motion sensor is unavailable.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and

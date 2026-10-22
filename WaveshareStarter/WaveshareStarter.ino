@@ -125,7 +125,7 @@ unsigned long lastEnemyStep = 0;
 unsigned long mazePulseReadyAt = 0;
 unsigned long mazePulseFlashUntil = 0;
 unsigned long mazeEnemyStunnedUntil = 0;
-unsigned long mazeLastStatusDrawAt = 0;
+int mazeStatusShown = -99;
 int mazeWinFrame = -1;
 int enemyRow = -1;
 int enemyCol = -1;
@@ -203,7 +203,8 @@ uint32_t discLastTouchSeen = 0;
 bool discTouchTracking = false;
 Arduino_Canvas *discCanvas = nullptr;
 bool discCanvasTried = false;
-constexpr float DISC_TWIST_GAIN = 3.0f;
+float discSteerY = 0;
+constexpr float DISC_STEER_DEAD_ZONE = 0.18f;
 uint32_t gameTonePhase = 0;
 uint32_t gameToneStep = 0;
 uint32_t gameToneFramesLeft = 0;
@@ -618,15 +619,18 @@ void drawMazeCaught() {
 }
 
 void drawMazeStatus() {
-  gfx->fillRect(104, 407, 258, 23, BG);
   unsigned long now = millis();
-  if (now < mazePulseFlashUntil)
-    textCentered("EMP! SENTINEL REPELLED", 412, 1, MAZE_GOLD);
-  else if (now < mazePulseReadyAt)
-    textCentered("EMP RECHARGING " + String((mazePulseReadyAt - now + 999) / 1000) + "s",
-                 412, 1, MUTED);
-  else textCentered("TILT/TAP MOVE  /  BUTTON: EMP", 412, 1, MAZE_GOLD);
-  mazeLastStatusDrawAt = now;
+  bool flashed = now < mazePulseFlashUntil;
+  int remaining = now < mazePulseReadyAt ?
+      (mazePulseReadyAt - now + 999) / 1000 : 0;
+  mazeStatusShown = flashed ? -1 : remaining;
+  uint16_t color = flashed || !remaining ? MAZE_GOLD : CYAN;
+  gfx->fillRoundRect(111, 400, 244, 28, 8, PANEL);
+  gfx->drawRoundRect(111, 400, 244, 28, 8, color);
+  if (flashed) textCentered("SENTINEL REPELLED", 406, 2, MAZE_GOLD);
+  else if (remaining)
+    textCentered("EMP RECHARGE " + String(remaining) + "s", 406, 2, WHITE);
+  else textCentered("BUTTON: EMP READY", 406, 2, MAZE_GOLD);
 }
 
 void drawMaze() {
@@ -667,7 +671,7 @@ void resetMaze() {
   mazePulseReadyAt = 0;
   mazePulseFlashUntil = 0;
   mazeEnemyStunnedUntil = 0;
-  mazeLastStatusDrawAt = 0;
+  mazeStatusShown = -99;
   screenDirty = true;
 }
 
@@ -860,7 +864,9 @@ void updateMaze() {
     mazePulseFlashUntil = 0;
     screenDirty = true;
   }
-  if (now - mazeLastStatusDrawAt >= 250) drawMazeStatus();
+  int status = now < mazePulseFlashUntil ? -1 :
+      now < mazePulseReadyAt ? (mazePulseReadyAt - now + 999) / 1000 : 0;
+  if (status != mazeStatusShown) drawMazeStatus();
   updateMazeEnemy();
   if (mazeCaught) return;
   if (!imuReady) return;
@@ -1546,6 +1552,7 @@ void startDiscDefender() {
   discFeedbackUntil = 0;
   discBoostUntil = 0;
   discTouchTracking = false;
+  discSteerY = 0;
   discLastUpdateAt = millis();
   discLastFrameAt = 0;
   spawnDiscShot();
@@ -1585,6 +1592,7 @@ bool aimDiscShield(int x, int y) {
   float radiusSquared = dx * dx + dy * dy;
   if (radiusSquared < 50 * 50 || radiusSquared > 130 * 130) return false;
   discShieldAngle = atan2f(dy, dx);
+  discSteerY = 0;
   discLastFrameAt = 0;
   return true;
 }
@@ -1663,8 +1671,8 @@ void drawDiscFrame() {
 void drawDiscDefender() {
   chrome("DISC DEFENDER");
   if (discPhase == DISC_READY) {
-    textCentered("DEFEND THE CORE", 198, 2, WHITE);
-    textCentered(gyroReady ? "TWIST OR TOUCH RING" : "TOUCH RING TO AIM",
+    textCentered("SHIELD BLOCKS PINK", 198, 2, WHITE);
+    textCentered(imuReady ? "TILT L/R OR DRAG RING" : "DRAG RING TO AIM",
                  237, 2, CYAN);
     textCentered("BUTTON/CORE: BOOST", 266, 2, WHITE);
     textCentered("THREE HITS TO LOSE", 292, 2, MUTED);
@@ -1678,8 +1686,9 @@ void drawDiscDefender() {
     textCentered("SCORE " + String(discScore) + "   HP " + String(discLives),
                  139, 2, WHITE);
     drawDiscFrame();
-    textCentered("STREAK " + String(discStreak) + "  /  ARC BLOCKS  /  BUTTON BOOSTS",
-                 423, 1, MUTED);
+    textCentered("TILT L/R OR DRAG RING", 406, 1, MUTED);
+    textCentered("BUTTON/CORE: BOOST  /  STREAK " + String(discStreak),
+                 422, 1, MUTED);
   }
   if (discPhase != DISC_PLAYING)
     textCentered("< BACK TO THE GRID", 423, 1, MUTED);
@@ -1692,13 +1701,22 @@ void updateDiscDefender() {
   if (elapsed < 25) return;
   discLastUpdateAt = now;
   float seconds = min(elapsed, uint32_t(60)) / 1000.0f;
-  if (gyroReady) {
-    GyroscopeData gyro;
-    if (imu.readGyro(gyro) && fabsf(gyro.dps.z) > 7)
-      discShieldAngle -= gyro.dps.z * (PI / 180.0f) * seconds * DISC_TWIST_GAIN;
+  if (imuReady && !discTouchTracking) {
+    AccelerometerData accel;
+    if (imu.readAccel(accel)) {
+      float lean = accel.mps2.y / 9.80665f;
+      discSteerY = 0.6f * discSteerY + 0.4f * lean;
+      float amount = fabsf(discSteerY);
+      if (amount > DISC_STEER_DEAD_ZONE) {
+        float turnSpeed = min(5.0f, 1.2f +
+            (amount - DISC_STEER_DEAD_ZONE) * 7.0f);
+        discShieldAngle += copysignf(turnSpeed * seconds, discSteerY);
+        discShieldAngle = atan2f(sinf(discShieldAngle), cosf(discShieldAngle));
+      }
+    }
   }
   if (discShotActive) {
-    float speed = 31 + min(discScore, uint16_t(20)) * 0.7f;
+    float speed = 16 + min(discScore, uint16_t(20)) * 0.3f;
     float previousRadius = discShotRadius;
     discShotRadius -= speed * seconds;
     if (previousRadius > 89 && discShotRadius <= 89) {
@@ -1749,8 +1767,7 @@ void pollDiscTouch(bool pending) {
   discLastTouchPoll = now;
   int16_t x[1] = {}, y[1] = {};
   if (!touch.getPoint(x, y, 1)) {
-    if (discTouchTracking && now - discLastTouchSeen > 120)
-      discTouchTracking = false;
+    discTouchTracking = false;
     return;
   }
   if (discTouchTracking && now - discLastTouchSeen > 180)

@@ -4,7 +4,7 @@ This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
 The home screen is a bright blue perspective-grid app launcher with a large white
-**GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, and **Settings**. Its prompt is
+**GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, **Sound Grid**, and **Settings**. Its prompt is
 "PICK A PROGRAM, USER."
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
 without repeating the immediately previous pick. Once Gridley joins Wi-Fi, it
@@ -34,6 +34,13 @@ little more tilt, so a normal viewing angle is less likely to move the puck.
 Reaching the exit triggers a short pixel-art explosion and congratulations
 screen, then starts another new maze automatically. If the sensor is
 unavailable, touch control still works.
+
+**Sound Grid** turns the two onboard microphones into a live neon artwork.
+The spokes, central orb, and color pulses react to nearby voices, music, and
+other sounds. It adjusts to the room's background noise automatically. The
+microphones are sampled only while Sound Grid is open; tap **BACK** to stop
+listening. The artwork runs entirely on the puck without Wi-Fi or a cloud
+service and does not save or transmit audio.
 
 If no network is configured or a saved connection fails, the board creates a
 setup network. Join it and open http://192.168.4.1/ in a browser. The network
@@ -87,9 +94,11 @@ current board has the 3.32-second clip supplied by the user.
   **XPowersLib 0.2.6**
 - **SensorLib 0.5.1** for the CST9217 touch controller
 - The same SensorLib installation drives the QMI8658 tilt sensor
-- ESP32 Arduino's built-in `ESP_I2S` library for audio output
+- ESP32 Arduino's built-in `ESP_I2S` library for audio output and microphone input
 - `es8311.c`, `es8311.h`, and `es8311_reg.h` from Waveshare's 1.75C
   `07_ES8311` example (Espressif Apache-2.0 licensed codec driver)
+- `es7210.cpp`, `es7210.h`, and `audio_hal.h` from Waveshare's 1.75C
+  `06_ES7210` example (Espressif MIT licensed microphone driver)
 
 The board pin map and display/PMIC initialization follow Waveshare's official
 examples at commit 4bfdc80eedbf95031e384610796bed15e0240312:
@@ -134,3 +143,13 @@ passed upload verification. Gridley connected to Wi-Fi, and
 Private.coffee Overpass service timed out and the main Overpass service refused
 the connection. Gridley kept its five saved bars and scheduled a later retry.
 A successful live map refresh has not yet been observed on the board.
+
+## Sound Grid live check, 2026-10-22
+
+The Sound Grid build compiled at 46% of the program partition. A diagnostic
+boot on the connected puck read both ES7210 channels. With the onboard sound
+playing, microphone RMS rose from roughly 35 in a quiet room to over 3,000,
+and the artwork's level rose to 1.0. The final launcher build then flashed and
+passed upload verification. Its serial status showed Wi-Fi connected, speaker
+ready, and 4.14 V battery voltage. The display artwork was not visually
+inspected from a camera during this check.

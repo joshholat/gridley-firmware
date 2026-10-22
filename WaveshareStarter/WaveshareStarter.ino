@@ -14,6 +14,7 @@
 #include <time.h>
 #include <ImuDrv.hpp>
 #include "TouchDrvCST.hpp"
+#include "es7210.h"
 #include "es8311.h"
 #include "esp_ota_ops.h"
 #include "esp_random.h"
@@ -46,7 +47,7 @@ I2SClass audioI2S;
 es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
-enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, STATUS_SETTINGS };
+enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, SOUND_ART, STATUS_SETTINGS };
 NetworkMode networkMode = CONNECTING;
 AppScreen screen = LAUNCHER;
 
@@ -133,6 +134,8 @@ bool powerReady = false;
 bool touchReady = false;
 bool imuReady = false;
 bool audioReady = false;
+bool micReady = false;
+bool micActive = false;
 bool audioPlaying = false;
 bool screenDirty = true;
 uint8_t audioVolume = 60;
@@ -169,6 +172,16 @@ int enemyRow = -1;
 int enemyCol = -1;
 int enemyPrevRow = -1;
 int enemyPrevCol = -1;
+constexpr int SOUND_BARS = 32;
+constexpr int SOUND_FRAMES = 256;
+int16_t micSamples[SOUND_FRAMES * 2];
+float soundBars[SOUND_BARS] = {};
+float soundLevel = 0;
+float soundNoiseFloor = 0;
+float soundPulse = 0;
+unsigned long lastSoundFrame = 0;
+unsigned long lastSoundLog = 0;
+uint32_t soundFrameCount = 0;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -518,12 +531,55 @@ void drawLauncher() {
   headlineCentered("GRIDLEY", 63);
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
-  button(84, 145, 298, 64, "CHICAGO SPINNER", CYAN);
-  button(84, 224, 298, 64, "GRID MAZE", MAZE_GOLD);
-  button(84, 303, 298, 64, "SETTINGS", PURPLE);
+  button(84, 143, 298, 51, "CHICAGO SPINNER", CYAN);
+  button(84, 201, 298, 51, "GRID MAZE", MAZE_GOLD);
+  button(84, 259, 298, 51, "SOUND GRID", BLUE);
+  button(84, 317, 298, 51, "SETTINGS", PURPLE);
 #if HAS_AUDIO_CLIP
   textCentered("BOOT x2: PLAY SOUND", 385, 1, MUTED);
 #endif
+}
+
+void drawSoundArt() {
+  chrome("SOUND GRID");
+  textCentered(micActive ? "MIC LIVE" : "MIC UNAVAILABLE", 145, 1,
+               micActive ? CYAN : MAZE_ENEMY);
+  if (micActive) textCentered("MAKE SOME NOISE", 403, 1, MUTED);
+  lastSoundFrame = 0;
+}
+
+void drawSoundArtFrame() {
+  // Keep the app title and BACK button intact while refreshing the art.
+  gfx->fillRect(99, 161, 268, 229, BG);
+  const int centerX = 233;
+  const int centerY = 269;
+  for (int radius = 48; radius <= 96; radius += 24) {
+    gfx->drawCircle(centerX, centerY, radius, MAZE_GRID);
+  }
+  uint16_t pulseColor = soundPulse > 0.55f ? WHITE :
+                        soundPulse > 0.18f ? PURPLE : BLUE;
+  float rotation = soundFrameCount * 0.018f;
+  for (int i = 0; i < SOUND_BARS; ++i) {
+    float angle = rotation + i * (2.0f * PI / SOUND_BARS);
+    float dx = cosf(angle);
+    float dy = sinf(angle);
+    float reach = 78 + 22 * soundBars[i] + 8 * soundPulse;
+    int x1 = centerX + static_cast<int>(dx * 70);
+    int y1 = centerY + static_cast<int>(dy * 70);
+    int x2 = centerX + static_cast<int>(dx * reach);
+    int y2 = centerY + static_cast<int>(dy * reach);
+    uint16_t color = i % 4 == 0 ? WHITE : i % 2 == 0 ? PURPLE : CYAN;
+    gfx->drawLine(x1, y1, x2, y2, color);
+    gfx->fillCircle(x2, y2, soundBars[i] > 0.55f ? 3 : 2, color);
+  }
+  int outerRadius = 57 + static_cast<int>(soundLevel * 10 + soundPulse * 5);
+  gfx->drawCircle(centerX, centerY, outerRadius, pulseColor);
+  gfx->drawCircle(centerX, centerY, outerRadius - 2, BLUE);
+  gfx->fillCircle(centerX, centerY, 34 + static_cast<int>(soundLevel * 6), PANEL);
+  gfx->drawCircle(centerX, centerY, 33 + static_cast<int>(soundLevel * 6), CYAN);
+  gfx->fillCircle(centerX, centerY, 13 + static_cast<int>(soundLevel * 7),
+                  soundPulse > 0.5f ? WHITE : CYAN);
+  ++soundFrameCount;
 }
 
 void generateMaze() {
@@ -1037,6 +1093,117 @@ bool initAudio() {
   return true;
 }
 
+bool startSoundArt() {
+  if (!audioReady) return false;
+  if (!micReady) {
+    // The ES7210 microphones share the speaker's clocks and I2S receive pin.
+    Wire.beginTransmission(ES7210_ADDR);
+    if (Wire.endTransmission() != 0) {
+      Serial.println("WARNING: ES7210 microphone ADC not found");
+      return false;
+    }
+    audio_hal_codec_config_t config = {};
+    config.adc_input = AUDIO_HAL_ADC_INPUT_ALL;
+    config.codec_mode = AUDIO_HAL_CODEC_MODE_ENCODE;
+    config.i2s_iface.mode = AUDIO_HAL_MODE_SLAVE;
+    config.i2s_iface.fmt = AUDIO_HAL_I2S_NORMAL;
+    config.i2s_iface.samples = AUDIO_HAL_16K_SAMPLES;
+    config.i2s_iface.bits = AUDIO_HAL_BIT_LENGTH_16BITS;
+    const es7210_input_mics_t onboardMics = static_cast<es7210_input_mics_t>(
+        ES7210_INPUT_MIC1 | ES7210_INPUT_MIC2);
+    if (es7210_adc_init(&Wire, &config) != ESP_OK ||
+        es7210_adc_config_i2s(config.codec_mode, &config.i2s_iface) != ESP_OK ||
+        es7210_mic_select(onboardMics) != ESP_OK ||
+        es7210_adc_set_gain(onboardMics, GAIN_37_5DB) != ESP_OK) {
+      Serial.println("WARNING: ES7210 microphone setup failed");
+      return false;
+    }
+    micReady = true;
+    Serial.println("Microphones ready");
+  }
+  if (es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE,
+                            AUDIO_HAL_CTRL_START) != ESP_OK) {
+    Serial.println("WARNING: ES7210 microphones would not start");
+    return false;
+  }
+  audioI2S.setTimeout(40);
+  micActive = true;
+  soundNoiseFloor = 0;
+  soundLevel = soundPulse = 0;
+  memset(soundBars, 0, sizeof(soundBars));
+  soundFrameCount = 0;
+  lastSoundLog = 0;
+  Serial.println("Sound Grid listening");
+  return true;
+}
+
+void stopSoundArt() {
+  if (!micActive) return;
+  micActive = false;
+  es7210_adc_ctrl_state(AUDIO_HAL_CODEC_MODE_ENCODE, AUDIO_HAL_CTRL_STOP);
+  audioI2S.setTimeout(1000);
+  Serial.println("Sound Grid stopped");
+}
+
+void updateSoundArt() {
+  if (screen != SOUND_ART || !micActive || !displayReady) return;
+  unsigned long now = millis();
+  if (lastSoundFrame && now - lastSoundFrame < 40) return;
+  lastSoundFrame = now;
+  size_t bytes = audioI2S.readBytes(reinterpret_cast<char *>(micSamples),
+                                    sizeof(micSamples));
+  if (bytes != sizeof(micSamples)) {
+    if (now - lastSoundLog > 1000) {
+      Serial.printf("Sound Grid microphone read: %u / %u bytes\n",
+                    static_cast<unsigned>(bytes),
+                    static_cast<unsigned>(sizeof(micSamples)));
+      lastSoundLog = now;
+    }
+    return;
+  }
+
+  uint64_t energyLeft = 0, energyRight = 0;
+  for (int i = 0; i < SOUND_FRAMES; ++i) {
+    int32_t left = micSamples[i * 2];
+    int32_t right = micSamples[i * 2 + 1];
+    energyLeft += left * left;
+    energyRight += right * right;
+  }
+  bool useRight = energyRight > energyLeft;
+  float rms = sqrtf(static_cast<float>(useRight ? energyRight : energyLeft) /
+                    SOUND_FRAMES);
+  if (soundNoiseFloor == 0) soundNoiseFloor = rms;
+  else if (rms < soundNoiseFloor)
+    soundNoiseFloor = soundNoiseFloor * 0.94f + rms * 0.06f;
+  else
+    soundNoiseFloor = soundNoiseFloor * 0.997f + rms * 0.003f;
+  float target = constrain((rms - soundNoiseFloor * 1.35f) /
+                               (soundNoiseFloor * 5.0f + 180.0f), 0.0f, 1.0f);
+  if (target > 0.22f && target > soundLevel * 1.6f) soundPulse = 1.0f;
+  else soundPulse *= 0.84f;
+  soundLevel = target > soundLevel ? soundLevel * 0.45f + target * 0.55f :
+                                    soundLevel * 0.83f + target * 0.17f;
+  for (int bar = 0; bar < SOUND_BARS; ++bar) {
+    int peak = 0;
+    for (int sample = 0; sample < SOUND_FRAMES / SOUND_BARS; ++sample) {
+      int index = bar * (SOUND_FRAMES / SOUND_BARS) + sample;
+      int value = abs(static_cast<int>(micSamples[index * 2 + (useRight ? 1 : 0)]));
+      if (value > peak) peak = value;
+    }
+    float height = constrain((peak - soundNoiseFloor * 1.6f) /
+                                 (soundNoiseFloor * 8.0f + 400.0f), 0.0f, 1.0f);
+    soundBars[bar] = height > soundBars[bar] ?
+        soundBars[bar] * 0.35f + height * 0.65f :
+        soundBars[bar] * 0.70f + height * 0.30f;
+  }
+  drawSoundArtFrame();
+  if (now - lastSoundLog > 1000) {
+    Serial.printf("Sound Grid: rms %.0f, floor %.0f, level %.2f, channel %c\n",
+                  rms, soundNoiseFloor, soundLevel, useRight ? 'R' : 'L');
+    lastSoundLog = now;
+  }
+}
+
 void setAudioVolume(uint8_t value) {
   if (value == audioVolume) return;
   audioVolume = value;
@@ -1127,6 +1294,7 @@ void drawScreen() {
     case LAUNCHER: drawLauncher(); break;
     case NIGHT_SPINNER: drawSpinner(); break;
     case GRID_MAZE: drawMaze(); break;
+    case SOUND_ART: drawSoundArt(); break;
     case STATUS_SETTINGS: drawSettings(); break;
   }
 }
@@ -1163,17 +1331,21 @@ void updateSpin() {
 
 void handleTap(int x, int y) {
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 145 && y <= 209) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 224 && y <= 288) {
+    if (x >= 84 && x <= 382 && y >= 143 && y <= 194) screen = NIGHT_SPINNER;
+    else if (x >= 84 && x <= 382 && y >= 201 && y <= 252) {
       resetMaze();
       screen = GRID_MAZE;
-    } else if (x >= 84 && x <= 382 && y >= 303 && y <= 367) {
+    } else if (x >= 84 && x <= 382 && y >= 259 && y <= 310) {
+      startSoundArt();
+      screen = SOUND_ART;
+    } else if (x >= 84 && x <= 382 && y >= 317 && y <= 368) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
       screen = STATUS_SETTINGS;
     }
   } else {
     if (x >= 91 && x <= 184 && y >= 91 && y <= 136) {
+      if (screen == SOUND_ART) stopSoundArt();
       screen = LAUNCHER;
     } else if (screen == NIGHT_SPINNER && x >= 95 && x <= 371 &&
                y >= 347 && y <= 410) {
@@ -1519,6 +1691,7 @@ void loop() {
     drawScreen();
     screenDirty = false;
   }
+  updateSoundArt();
   updateMaze();
   if (millis() - lastLog > 5000) {
     logStatus();

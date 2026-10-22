@@ -74,8 +74,10 @@ constexpr uint32_t MAZE_BURST_MS = 960;
 constexpr uint32_t MAZE_RESTART_MS = 3600;
 constexpr uint32_t MAZE_ENEMY_STEP_MS = 650;
 constexpr uint32_t MAZE_CAUGHT_MS = 1800;
-constexpr uint32_t MAZE_PULSE_COOLDOWN_MS = 7000;
-constexpr uint32_t MAZE_PULSE_STUN_MS = 1800;
+constexpr uint32_t MAZE_MISSILE_COOLDOWN_MS = 7000;
+constexpr uint32_t MAZE_MISSILE_STUN_MS = 1800;
+constexpr uint32_t MAZE_MISSILE_STEP_MS = 150;
+constexpr uint8_t MAZE_MISSILE_RANGE = 6;
 char mazeCells[MAZE_SIZE][MAZE_SIZE + 1];
 constexpr int VOLUME_TRACK_X = 139;
 constexpr int VOLUME_TRACK_WIDTH = 188;
@@ -122,10 +124,19 @@ unsigned long lastMazeStep = 0;
 unsigned long mazeWonAt = 0;
 unsigned long mazeCaughtAt = 0;
 unsigned long lastEnemyStep = 0;
-unsigned long mazePulseReadyAt = 0;
-unsigned long mazePulseFlashUntil = 0;
+unsigned long mazeMissileReadyAt = 0;
+unsigned long mazeMissileFeedbackUntil = 0;
 unsigned long mazeEnemyStunnedUntil = 0;
 int mazeStatusShown = -99;
+uint8_t mazeMissileFeedback = 0;
+bool mazeMissileActive = false;
+uint8_t mazeMissileRow = 0;
+uint8_t mazeMissileCol = 0;
+uint8_t mazeMissilePathRow[MAZE_MISSILE_RANGE] = {};
+uint8_t mazeMissilePathCol[MAZE_MISSILE_RANGE] = {};
+uint8_t mazeMissilePathLength = 0;
+uint8_t mazeMissilePathIndex = 0;
+unsigned long lastMazeMissileStep = 0;
 int mazeWinFrame = -1;
 int enemyRow = -1;
 int enemyCol = -1;
@@ -205,6 +216,7 @@ Arduino_Canvas *discCanvas = nullptr;
 bool discCanvasTried = false;
 float discSteerY = 0;
 constexpr float DISC_STEER_DEAD_ZONE = 0.18f;
+constexpr float DISC_MIN_SHOT_ANGLE = 0.8f;
 uint32_t gameTonePhase = 0;
 uint32_t gameToneStep = 0;
 uint32_t gameToneFramesLeft = 0;
@@ -536,7 +548,7 @@ void drawMazeCell(int row, int col) {
 void drawMazePlayer() {
   int x = MAZE_X + mazeCol * MAZE_CELL + MAZE_CELL / 2;
   int y = MAZE_Y + mazeRow * MAZE_CELL + MAZE_CELL / 2;
-  if (millis() < mazePulseFlashUntil) gfx->drawCircle(x, y, 13, MAZE_GOLD);
+  if (mazeMissileActive) gfx->drawCircle(x, y, 13, MAZE_GOLD);
   gfx->fillCircle(x, y, 10, CYAN);
   gfx->fillCircle(x, y, 6, WHITE);
 }
@@ -549,6 +561,16 @@ void drawMazeEnemy() {
   gfx->fillRect(x - 9, y - 9, 18, 18, color);
   gfx->drawRect(x - 10, y - 10, 20, 20, WHITE);
   gfx->fillRect(x - 3, y - 3, 6, 6, BG);
+}
+
+void drawMazeMissile() {
+  if (!mazeMissileActive) return;
+  int x = MAZE_X + mazeMissileCol * MAZE_CELL + MAZE_CELL / 2;
+  int y = MAZE_Y + mazeMissileRow * MAZE_CELL + MAZE_CELL / 2;
+  gfx->fillCircle(x, y, 7, MAZE_GOLD);
+  gfx->fillCircle(x, y, 3, WHITE);
+  gfx->drawFastHLine(x - 11, y, 4, CYAN);
+  gfx->drawFastHLine(x + 8, y, 4, CYAN);
 }
 
 void drawMazeBurst(int frame) {
@@ -618,19 +640,26 @@ void drawMazeCaught() {
   textCentered("NEW GRID INCOMING...", 279, 1, MUTED);
 }
 
+int mazeMissileStatus(unsigned long now) {
+  if (mazeMissileActive) return -1;
+  if (now < mazeMissileFeedbackUntil)
+    return mazeMissileFeedback == 2 ? -2 : -3;
+  return now < mazeMissileReadyAt ?
+      (mazeMissileReadyAt - now + 999) / 1000 : 0;
+}
+
 void drawMazeStatus() {
-  unsigned long now = millis();
-  bool flashed = now < mazePulseFlashUntil;
-  int remaining = now < mazePulseReadyAt ?
-      (mazePulseReadyAt - now + 999) / 1000 : 0;
-  mazeStatusShown = flashed ? -1 : remaining;
-  uint16_t color = flashed || !remaining ? MAZE_GOLD : CYAN;
+  int status = mazeMissileStatus(millis());
+  mazeStatusShown = status;
+  uint16_t color = status < 0 || status == 0 ? MAZE_GOLD : CYAN;
   gfx->fillRoundRect(111, 400, 244, 28, 8, PANEL);
   gfx->drawRoundRect(111, 400, 244, 28, 8, color);
-  if (flashed) textCentered("SENTINEL REPELLED", 406, 2, MAZE_GOLD);
-  else if (remaining)
-    textCentered("EMP RECHARGE " + String(remaining) + "s", 406, 2, WHITE);
-  else textCentered("BUTTON: EMP READY", 406, 2, MAZE_GOLD);
+  if (status == -1) textCentered("MISSILE IN FLIGHT", 406, 2, MAZE_GOLD);
+  else if (status == -2) textCentered("SENTINEL HIT!", 406, 2, MAZE_GOLD);
+  else if (status == -3) textCentered("MISSILE MISSED", 406, 2, WHITE);
+  else if (status > 0)
+    textCentered("MISSILE RECHARGE " + String(status) + "s", 406, 2, WHITE);
+  else textCentered("BUTTON: MISSILE", 406, 2, MAZE_GOLD);
 }
 
 void drawMaze() {
@@ -645,7 +674,7 @@ void drawMaze() {
     return;
   }
   chrome("GRID MAZE");
-  textCentered("REACH THE GOLD EXIT", 121, 1, MUTED);
+  textCentered("REACH GOLD / MISSILE RANGE 6", 121, 1, MUTED);
   for (int row = 0; row < MAZE_SIZE; ++row) {
     for (int col = 0; col < MAZE_SIZE; ++col) drawMazeCell(row, col);
   }
@@ -653,6 +682,7 @@ void drawMaze() {
                 MAZE_SIZE * MAZE_CELL + 4, MAZE_SIZE * MAZE_CELL + 4, CYAN);
   drawMazeEnemy();
   drawMazePlayer();
+  drawMazeMissile();
   drawMazeStatus();
 }
 
@@ -668,52 +698,40 @@ void resetMaze() {
   mazeWonAt = 0;
   mazeCaughtAt = 0;
   mazeWinFrame = -1;
-  mazePulseReadyAt = 0;
-  mazePulseFlashUntil = 0;
+  mazeMissileReadyAt = 0;
+  mazeMissileFeedbackUntil = 0;
   mazeEnemyStunnedUntil = 0;
   mazeStatusShown = -99;
+  mazeMissileFeedback = 0;
+  mazeMissileActive = false;
+  mazeMissilePathLength = mazeMissilePathIndex = 0;
   screenDirty = true;
 }
 
 void catchMazePlayer() {
   mazeCaught = true;
+  mazeMissileActive = false;
   mazeCaughtAt = millis();
   Serial.println("Grid Maze: sentinel caught player");
   playMazeSound(false);
   drawMazeCaught();
 }
 
-void fireMazePulse() {
-  unsigned long now = millis();
-  if (screen != GRID_MAZE || mazeWon || mazeCaught || now < mazePulseReadyAt ||
-      enemyRow < 0) return;
-
-  // The EMP relocates the sentinel to a distant reachable tile, even when
-  // a narrow corridor leaves no physical space to push it back one square.
-  int8_t distance[MAZE_SIZE][MAZE_SIZE];
+void mazeDistancesFrom(int originRow, int originCol,
+                       int8_t distance[MAZE_SIZE][MAZE_SIZE]) {
   for (int row = 0; row < MAZE_SIZE; ++row)
     for (int col = 0; col < MAZE_SIZE; ++col) distance[row][col] = -1;
   uint8_t queueRow[MAZE_SIZE * MAZE_SIZE];
   uint8_t queueCol[MAZE_SIZE * MAZE_SIZE];
   int head = 0, tail = 0;
-  queueRow[tail] = mazeRow;
-  queueCol[tail++] = mazeCol;
-  distance[mazeRow][mazeCol] = 0;
+  queueRow[tail] = originRow;
+  queueCol[tail++] = originCol;
+  distance[originRow][originCol] = 0;
   const int8_t dRow[] = {-1, 1, 0, 0};
   const int8_t dCol[] = {0, 0, -1, 1};
-  int bestDistance = -1;
-  int bestRow = -1, bestCol = -1;
   while (head < tail) {
     int row = queueRow[head];
     int col = queueCol[head++];
-    if (distance[row][col] > bestDistance &&
-        mazeCells[row][col] != 'G' &&
-        (row != enemyRow || col != enemyCol) &&
-        (row != mazeRow || col != mazeCol)) {
-      bestDistance = distance[row][col];
-      bestRow = row;
-      bestCol = col;
-    }
     for (int dir = 0; dir < 4; ++dir) {
       int nextRow = row + dRow[dir];
       int nextCol = col + dCol[dir];
@@ -723,17 +741,112 @@ void fireMazePulse() {
       queueCol[tail++] = nextCol;
     }
   }
-  if (bestRow < 0) return;
-  enemyRow = bestRow;
-  enemyCol = bestCol;
+}
+
+void hitMazeSentinel() {
+  unsigned long now = millis();
+  mazeMissileActive = false;
+  mazeMissileFeedback = 2;
+  mazeMissileFeedbackUntil = now + 850;
+  int8_t distance[MAZE_SIZE][MAZE_SIZE];
+  mazeDistancesFrom(mazeRow, mazeCol, distance);
+  const int8_t dRow[] = {-1, 1, 0, 0};
+  const int8_t dCol[] = {0, 0, -1, 1};
+  for (int push = 0; push < 3; ++push) {
+    int bestDistance = distance[enemyRow][enemyCol];
+    int bestRow = -1, bestCol = -1;
+    for (int dir = 0; dir < 4; ++dir) {
+      int row = enemyRow + dRow[dir];
+      int col = enemyCol + dCol[dir];
+      if (!mazeWall(row, col) && mazeCells[row][col] != 'G' &&
+          distance[row][col] > bestDistance) {
+        bestDistance = distance[row][col];
+        bestRow = row;
+        bestCol = col;
+      }
+    }
+    if (bestRow < 0) break;
+    enemyRow = bestRow;
+    enemyCol = bestCol;
+  }
   enemyPrevRow = enemyPrevCol = -1;
   lastEnemyStep = now;
-  mazePulseReadyAt = now + MAZE_PULSE_COOLDOWN_MS;
-  mazePulseFlashUntil = now + 750;
-  mazeEnemyStunnedUntil = now + MAZE_PULSE_STUN_MS;
-  playDiscTone(720, 130);
-  Serial.printf("Grid Maze EMP: sentinel repelled to %d,%d\n", enemyRow, enemyCol);
+  mazeEnemyStunnedUntil = now + MAZE_MISSILE_STUN_MS;
+  playDiscTone(960, 150);
+  Serial.printf("Grid Maze missile hit: sentinel knocked to %d,%d\n",
+                enemyRow, enemyCol);
   screenDirty = true;
+}
+
+void missMazeMissile() {
+  mazeMissileActive = false;
+  mazeMissileFeedback = 3;
+  mazeMissileFeedbackUntil = millis() + 700;
+  playDiscTone(220, 110);
+  Serial.println("Grid Maze missile missed");
+  screenDirty = true;
+}
+
+void fireMazeMissile() {
+  unsigned long now = millis();
+  if (screen != GRID_MAZE || mazeWon || mazeCaught || mazeMissileActive ||
+      now < mazeMissileReadyAt || enemyRow < 0) return;
+  int8_t distance[MAZE_SIZE][MAZE_SIZE];
+  mazeDistancesFrom(enemyRow, enemyCol, distance);
+  int stepsToTarget = distance[mazeRow][mazeCol];
+  if (stepsToTarget <= 0) return;
+  mazeMissilePathLength = min(stepsToTarget, int(MAZE_MISSILE_RANGE));
+  int row = mazeRow, col = mazeCol;
+  const int8_t dRow[] = {-1, 1, 0, 0};
+  const int8_t dCol[] = {0, 0, -1, 1};
+  for (int step = 0; step < mazeMissilePathLength; ++step) {
+    for (int dir = 0; dir < 4; ++dir) {
+      int nextRow = row + dRow[dir];
+      int nextCol = col + dCol[dir];
+      if (!mazeWall(nextRow, nextCol) &&
+          distance[nextRow][nextCol] == distance[row][col] - 1) {
+        row = nextRow;
+        col = nextCol;
+        break;
+      }
+    }
+    mazeMissilePathRow[step] = row;
+    mazeMissilePathCol[step] = col;
+  }
+  mazeMissileRow = mazeRow;
+  mazeMissileCol = mazeCol;
+  mazeMissilePathIndex = 0;
+  mazeMissileActive = true;
+  mazeMissileReadyAt = now + MAZE_MISSILE_COOLDOWN_MS;
+  mazeMissileFeedbackUntil = 0;
+  lastMazeMissileStep = now - MAZE_MISSILE_STEP_MS;
+  playDiscTone(720, 100);
+  Serial.printf("Grid Maze missile launched: target %d,%d, flight %u tiles\n",
+                enemyRow, enemyCol, mazeMissilePathLength);
+  screenDirty = true;
+}
+
+void updateMazeMissile() {
+  if (!mazeMissileActive || millis() - lastMazeMissileStep < MAZE_MISSILE_STEP_MS)
+    return;
+  lastMazeMissileStep = millis();
+  if (mazeMissilePathIndex >= mazeMissilePathLength) {
+    missMazeMissile();
+    return;
+  }
+  int oldRow = mazeMissileRow, oldCol = mazeMissileCol;
+  mazeMissileRow = mazeMissilePathRow[mazeMissilePathIndex];
+  mazeMissileCol = mazeMissilePathCol[mazeMissilePathIndex++];
+  if (mazeMissileRow == enemyRow && mazeMissileCol == enemyCol) {
+    hitMazeSentinel();
+    return;
+  }
+  drawMazeCell(oldRow, oldCol);
+  if (oldRow == mazeRow && oldCol == mazeCol) drawMazePlayer();
+  if (oldRow == enemyRow && oldCol == enemyCol) drawMazeEnemy();
+  drawMazeCell(mazeMissileRow, mazeMissileCol);
+  if (mazeMissileRow == mazeRow && mazeMissileCol == mazeCol) drawMazePlayer();
+  drawMazeMissile();
 }
 
 bool stepMaze(int dRow, int dCol) {
@@ -744,7 +857,8 @@ bool stepMaze(int dRow, int dCol) {
   int oldCol = mazeCol;
   mazeRow = nextRow;
   mazeCol = nextCol;
-  if (mazeRow == enemyRow && mazeCol == enemyCol) {
+  if (mazeRow == enemyRow && mazeCol == enemyCol &&
+      millis() >= mazeEnemyStunnedUntil) {
     catchMazePlayer();
     return true;
   }
@@ -752,8 +866,13 @@ bool stepMaze(int dRow, int dCol) {
   drawMazeCell(oldRow, oldCol);
   drawMazeCell(mazeRow, mazeCol);
   if (oldRow == enemyRow && oldCol == enemyCol) drawMazeEnemy();
+  if (mazeMissileActive && mazeMissileRow == oldRow &&
+      mazeMissileCol == oldCol) drawMazeMissile();
   drawMazePlayer();
+  if (mazeMissileActive && mazeMissileRow == mazeRow &&
+      mazeMissileCol == mazeCol) drawMazeMissile();
   if (mazeWon) {
+    mazeMissileActive = false;
     Serial.println("Grid Maze cleared");
     mazeWonAt = millis();
     mazeWinFrame = 0;
@@ -840,11 +959,19 @@ void updateMazeEnemy() {
   enemyCol += dCol[chosen];
   enemyPrevRow = oldRow;
   enemyPrevCol = oldCol;
+  if (mazeMissileActive && enemyRow == mazeMissileRow &&
+      enemyCol == mazeMissileCol) {
+    hitMazeSentinel();
+    return;
+  }
   if (enemyRow == mazeRow && enemyCol == mazeCol) {
     catchMazePlayer();
     return;
   }
   drawMazeCell(oldRow, oldCol);
+  if (oldRow == mazeRow && oldCol == mazeCol) drawMazePlayer();
+  if (mazeMissileActive && oldRow == mazeMissileRow &&
+      oldCol == mazeMissileCol) drawMazeMissile();
   drawMazeCell(enemyRow, enemyCol);
   drawMazeEnemy();
 }
@@ -860,13 +987,9 @@ void updateMaze() {
     return;
   }
   unsigned long now = millis();
-  if (mazePulseFlashUntil && now >= mazePulseFlashUntil) {
-    mazePulseFlashUntil = 0;
-    screenDirty = true;
-  }
-  int status = now < mazePulseFlashUntil ? -1 :
-      now < mazePulseReadyAt ? (mazePulseReadyAt - now + 999) / 1000 : 0;
+  int status = mazeMissileStatus(now);
   if (status != mazeStatusShown) drawMazeStatus();
+  updateMazeMissile();
   updateMazeEnemy();
   if (mazeCaught) return;
   if (!imuReady) return;
@@ -1535,8 +1658,16 @@ float discAngleDistance(float a, float b) {
 }
 
 void spawnDiscShot() {
-  discShotAngle = discShotNumber++ == 0 ? -PI / 2 :
-      (esp_random() % 6283) / 1000.0f - PI;
+  if (discShotNumber++ == 0) {
+    discShotAngle = -PI / 2;
+  } else {
+    // Sample uniformly from the ring outside the previous shot's sector.
+    float availableArc = 2 * PI - 2 * DISC_MIN_SHOT_ANGLE;
+    float offset = DISC_MIN_SHOT_ANGLE +
+        (esp_random() % 1000000) / 1000000.0f * availableArc;
+    discShotAngle = atan2f(sinf(discShotAngle + offset),
+                           cosf(discShotAngle + offset));
+  }
   discShotRadius = 112;
   discShotActive = true;
 }
@@ -1823,7 +1954,7 @@ void pollBootButton() {
     }
     if (screen == GRID_MAZE) {
       bootLastTapAt = 0;
-      fireMazePulse();
+      fireMazeMissile();
       return;
     }
     if (screen == DISC_DEFENDER) {

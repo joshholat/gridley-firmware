@@ -17,9 +17,12 @@ avoiding the pink sentinel. It patrols the maze and follows you down clear
 straight corridors. Touching it plays a descending sound and shows a brief
 "ZAPPED!" screen, then starts a new round. The onboard QMI8658 motion sensor
 drives the puck; tapping the maze nudges it one square in the direction you
-tapped. Press BOOT to fire an EMP pulse that sends the sentinel to a distant
-part of the maze and stuns it briefly. The pulse recharges in seven seconds;
-the remaining time appears in a bright badge below the maze. Downward
+tapped. Press BOOT to launch a small missile toward the sentinel. It follows
+the corridor route to where the sentinel was when you fired, up to six tiles;
+the sentinel can move out of its path. Only a direct hit knocks it back and
+stuns it briefly, letting you pass through the stunned sentinel. A miss still
+uses the shot. The missile recharges in seven seconds, with the remaining time
+shown below the maze. Downward
 movement needs a little more tilt, so a normal viewing angle is less likely
 to move the puck.
 Reaching the exit triggers an ascending sound, a short pixel-art explosion,
@@ -49,6 +52,9 @@ shots that miss the arc keep moving toward the core and cost a hit point if
 they reach it. Build a streak, protect three hit points, and beat the saved
 high score. The speaker makes short arcade tones for blocks and core hits.
 Touch aiming works even if the motion sensor is unavailable.
+Each new pink shot starts at least about 18% of the screen width away from the
+previous shot's starting point along the outer ring, so consecutive shots
+cannot keep coming from almost the same place.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and

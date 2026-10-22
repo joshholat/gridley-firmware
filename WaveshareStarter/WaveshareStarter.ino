@@ -47,7 +47,7 @@ I2SClass audioI2S;
 es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
-enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, SOUND_ART, STATUS_SETTINGS };
+enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, SOUND_ART, GRIDLEY_SAYS, STATUS_SETTINGS };
 NetworkMode networkMode = CONNECTING;
 AppScreen screen = LAUNCHER;
 
@@ -184,6 +184,35 @@ unsigned long lastSoundFrame = 0;
 unsigned long lastSoundLog = 0;
 uint32_t soundFrameCount = 0;
 Arduino_Canvas *soundCanvas = nullptr;
+
+enum GridMove : uint8_t {
+  GRID_SHAKE, GRID_FLICK, GRID_TILT_LEFT, GRID_TILT_RIGHT,
+  GRID_TAP, GRID_SWIPE, GRID_PRESS
+};
+enum GridPhase : uint8_t { GRID_READY, GRID_PROMPT, GRID_SUCCESS, GRID_OVER };
+GridPhase gridPhase = GRID_READY;
+GridMove gridMove = GRID_TAP;
+GridMove gridPreviousMove = GRID_TAP;
+bool gyroReady = false;
+uint16_t gridScore = 0;
+uint16_t gridBest = 0;
+uint32_t gridPromptAt = 0;
+uint32_t gridTimeLimit = 3500;
+uint32_t gridFeedbackAt = 0;
+uint32_t gridLastMotionPoll = 0;
+uint32_t gridTouchArmedAt = 0;
+uint32_t gridLastTouchPoll = 0;
+uint32_t gridLastTouchSeen = 0;
+uint32_t gridTouchStartAt = 0;
+float gridBaseY = 0;
+float gridLastAccelX = 0;
+float gridLastAccelY = 0;
+float gridLastAccelZ = 0;
+bool gridLastAccelValid = false;
+bool gridTouchTracking = false;
+int gridTouchStartX = 0;
+int gridTouchStartY = 0;
+int gridLastTimerWidth = -1;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -533,10 +562,11 @@ void drawLauncher() {
   headlineCentered("GRIDLEY", 63);
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
-  button(84, 151, 298, 54, "CHICAGO SPINNER", CYAN);
-  button(84, 217, 298, 54, "GRID MAZE", MAZE_GOLD);
-  button(84, 283, 298, 54, "SOUND GRID", BLUE);
-  // Settings is a small utility control below the three programs. Its solid
+  button(84, 146, 298, 48, "CHICAGO SPINNER", CYAN);
+  button(84, 201, 298, 48, "GRID MAZE", MAZE_GOLD);
+  button(84, 256, 298, 48, "SOUND GRID", BLUE);
+  button(84, 311, 298, 48, "GRIDLEY SAYS", PURPLE);
+  // Settings is a small utility control below the four programs. Its solid
   // backing clears the perspective lines so the label stays legible.
   gfx->fillRoundRect(145, 384, 176, 46, 20, BG);
   gfx->drawRoundRect(145, 384, 176, 46, 20, PURPLE);
@@ -1323,6 +1353,232 @@ void pumpAudio() {
 #endif
 }
 
+const char *gridMoveLabel(GridMove move) {
+  switch (move) {
+    case GRID_SHAKE: return "SHAKE IT";
+    case GRID_FLICK: return "FLICK IT";
+    case GRID_TILT_LEFT: return "TILT LEFT";
+    case GRID_TILT_RIGHT: return "TILT RIGHT";
+    case GRID_TAP: return "TAP IT";
+    case GRID_SWIPE: return "SWIPE IT";
+    case GRID_PRESS: return "PRESS BOOT";
+  }
+  return "MOVE IT";
+}
+
+const char *gridMoveHint(GridMove move) {
+  switch (move) {
+    case GRID_SHAKE: return "QUICK BACK-AND-FORTH";
+    case GRID_FLICK: return "SNAP YOUR WRIST";
+    case GRID_TILT_LEFT: return "LEAN THE SCREEN LEFT";
+    case GRID_TILT_RIGHT: return "LEAN THE SCREEN RIGHT";
+    case GRID_TAP: return "TOUCH THE SCREEN";
+    case GRID_SWIPE: return "DRAG ACROSS THE SCREEN";
+    case GRID_PRESS: return "ONE SHORT SIDE PRESS";
+  }
+  return "FOLLOW THE GRID";
+}
+
+uint16_t gridMoveColor(GridMove move) {
+  if (move == GRID_PRESS || move == GRID_FLICK) return PURPLE;
+  if (move == GRID_TILT_LEFT || move == GRID_TILT_RIGHT) return MAZE_GOLD;
+  return CYAN;
+}
+
+void drawGridleySays() {
+  chrome("GRIDLEY SAYS");
+  textCentered("SCORE " + String(gridScore) + "  /  BEST " + String(gridBest),
+               148, 2, MUTED);
+  if (gridPhase == GRID_READY) {
+    textCentered("FOLLOW THE COMMAND", 205, 2, WHITE);
+    textCentered("SHAKE / FLICK / TILT", 251, 1, CYAN);
+    textCentered("TAP / SWIPE / BOOT", 269, 1, CYAN);
+    button(101, 352, 264, 55, "START", PURPLE);
+  } else if (gridPhase == GRID_PROMPT) {
+    uint16_t color = gridMoveColor(gridMove);
+    gfx->drawCircle(233, 243, 112, GRID_DIM);
+    gfx->drawCircle(233, 243, 105, color);
+    textCentered(gridMoveLabel(gridMove), 220, 3, color);
+    textCentered(gridMoveHint(gridMove), 275, 1, WHITE);
+    gfx->drawRoundRect(98, 365, 270, 20, 8, BLUE);
+    uint32_t elapsed = millis() - gridPromptAt;
+    int width = elapsed >= gridTimeLimit ? 0 :
+        262 * (gridTimeLimit - elapsed) / gridTimeLimit;
+    if (width > 0) gfx->fillRoundRect(102, 369, width, 12, 5, color);
+    gridLastTimerWidth = width;
+  } else if (gridPhase == GRID_SUCCESS) {
+    textCentered("NICE MOVE", 215, 3, CYAN);
+    textCentered("NEXT COMMAND...", 270, 2, WHITE);
+  } else {
+    textCentered("GRID OVER", 205, 3, MAZE_ENEMY);
+    textCentered("SCORE " + String(gridScore), 263, 2, WHITE);
+    button(101, 352, 264, 55, "TRY AGAIN", PURPLE);
+  }
+  textCentered("< BACK TO THE GRID", 423, 1, MUTED);
+}
+
+void nextGridleyCommand() {
+  GridMove choices[7];
+  int count = 0;
+  if (imuReady) {
+    choices[count++] = GRID_SHAKE;
+    choices[count++] = GRID_TILT_LEFT;
+    choices[count++] = GRID_TILT_RIGHT;
+  }
+  if (gyroReady) choices[count++] = GRID_FLICK;
+  if (touchReady) {
+    choices[count++] = GRID_TAP;
+    choices[count++] = GRID_SWIPE;
+  }
+  choices[count++] = GRID_PRESS;
+  int chosen = esp_random() % count;
+  if (count > 1 && choices[chosen] == gridPreviousMove) {
+    chosen = (chosen + 1 + esp_random() % (count - 1)) % count;
+  }
+  gridMove = choices[chosen];
+  gridPreviousMove = gridMove;
+  gridPhase = GRID_PROMPT;
+  gridPromptAt = millis();
+  gridTimeLimit = max(1700, 3500 - static_cast<int>(gridScore) * 100);
+  gridTouchArmedAt = gridPromptAt + 260;
+  gridLastMotionPoll = 0;
+  gridLastAccelValid = false;
+  gridLastTimerWidth = -1;
+  if (imuReady) {
+    AccelerometerData accel;
+    if (imu.readAccel(accel)) {
+      gridBaseY = accel.mps2.y / 9.80665f;
+      gridLastAccelX = accel.mps2.x / 9.80665f;
+      gridLastAccelY = gridBaseY;
+      gridLastAccelZ = accel.mps2.z / 9.80665f;
+      gridLastAccelValid = true;
+    }
+  }
+  Serial.printf("Gridley Says: %s, score %u\n", gridMoveLabel(gridMove),
+                gridScore);
+  screenDirty = true;
+}
+
+void startGridleySays() {
+  gridScore = 0;
+  gridPreviousMove = GRID_PRESS;
+  nextGridleyCommand();
+  // The START touch must be released before it can count as a game action.
+  gridTouchArmedAt = millis() + 450;
+}
+
+void finishGridleySays() {
+  gridPhase = GRID_OVER;
+  if (gridScore > gridBest) {
+    gridBest = gridScore;
+    settings.putUShort("gridBest", gridBest);
+  }
+  Serial.printf("Gridley Says over: %u, best %u\n", gridScore, gridBest);
+  screenDirty = true;
+}
+
+void gridleyInput(GridMove input) {
+  if (gridPhase != GRID_PROMPT || millis() < gridTouchArmedAt) return;
+  if (input != gridMove) {
+    finishGridleySays();
+    return;
+  }
+  ++gridScore;
+  gridPhase = GRID_SUCCESS;
+  gridFeedbackAt = millis();
+  Serial.printf("Gridley Says good: %u\n", gridScore);
+  screenDirty = true;
+}
+
+void updateGridleySays() {
+  if (screen != GRIDLEY_SAYS || !displayReady) return;
+  uint32_t now = millis();
+  if (gridPhase == GRID_SUCCESS) {
+    if (now - gridFeedbackAt >= 480) nextGridleyCommand();
+    return;
+  }
+  if (gridPhase != GRID_PROMPT) return;
+  if (now - gridPromptAt >= gridTimeLimit) {
+    finishGridleySays();
+    return;
+  }
+  int width = 262 * (gridTimeLimit - (now - gridPromptAt)) / gridTimeLimit;
+  if (gridLastTimerWidth >= 0 && width < gridLastTimerWidth &&
+      !screenDirty) {
+    gfx->fillRect(102 + width, 369, gridLastTimerWidth - width, 12, BG);
+    gridLastTimerWidth = width;
+  }
+  if (!imuReady || now - gridLastMotionPoll < 25) return;
+  gridLastMotionPoll = now;
+  AccelerometerData accel;
+  if (!imu.readAccel(accel)) return;
+  float ax = accel.mps2.x / 9.80665f;
+  float ay = accel.mps2.y / 9.80665f;
+  float az = accel.mps2.z / 9.80665f;
+  if (!gridLastAccelValid) {
+    gridBaseY = ay;
+    gridLastAccelValid = true;
+  }
+  float dx = ax - gridLastAccelX;
+  float dy = ay - gridLastAccelY;
+  float dz = az - gridLastAccelZ;
+  gridLastAccelX = ax;
+  gridLastAccelY = ay;
+  gridLastAccelZ = az;
+  if (now - gridPromptAt < 260) return;
+  if (gridMove == GRID_SHAKE && dx * dx + dy * dy + dz * dz > 0.65f * 0.65f) {
+    gridleyInput(GRID_SHAKE);
+  } else if (gridMove == GRID_TILT_LEFT && ay - gridBaseY < -0.38f) {
+    gridleyInput(GRID_TILT_LEFT);
+  } else if (gridMove == GRID_TILT_RIGHT && ay - gridBaseY > 0.38f) {
+    gridleyInput(GRID_TILT_RIGHT);
+  } else if (gridMove == GRID_FLICK && gyroReady) {
+    GyroscopeData gyro;
+    if (imu.readGyro(gyro) &&
+        (fabsf(gyro.dps.x) > 180 || fabsf(gyro.dps.y) > 180 ||
+         fabsf(gyro.dps.z) > 180)) {
+      gridleyInput(GRID_FLICK);
+    }
+  }
+}
+
+void pollGridleyTouch(bool pending) {
+  uint32_t now = millis();
+  if (!pending && (!gridTouchTracking || now - gridLastTouchPoll < 25)) return;
+  gridLastTouchPoll = now;
+  int16_t x[1] = {}, y[1] = {};
+  if (!touch.getPoint(x, y, 1)) {
+    if (gridTouchTracking && now - gridLastTouchSeen > 120)
+      gridTouchTracking = false;
+    return;
+  }
+  if (gridTouchTracking && now - gridLastTouchSeen > 180)
+    gridTouchTracking = false;
+  gridLastTouchSeen = now;
+  if (!gridTouchTracking) {
+    gridTouchTracking = true;
+    gridTouchStartX = x[0];
+    gridTouchStartY = y[0];
+    gridTouchStartAt = now;
+    if (x[0] >= 91 && x[0] <= 184 && y[0] >= 91 && y[0] <= 136) {
+      gridTouchTracking = false;
+      handleTap(x[0], y[0]);
+      return;
+    }
+    if (gridPhase == GRID_READY || gridPhase == GRID_OVER) {
+      if (y[0] >= 345 && y[0] <= 420) startGridleySays();
+    } else if (gridPhase == GRID_PROMPT && now >= gridTouchArmedAt) {
+      if (gridMove == GRID_TAP) gridleyInput(GRID_TAP);
+      else if (gridMove != GRID_SWIPE) finishGridleySays();
+    }
+  } else if (gridPhase == GRID_PROMPT && gridMove == GRID_SWIPE &&
+             now >= gridTouchArmedAt && now - gridTouchStartAt < 900 &&
+             (abs(x[0] - gridTouchStartX) > 70 ||
+              abs(y[0] - gridTouchStartY) > 70)) {
+    gridleyInput(GRID_SWIPE);
+  }
+}
+
 void pollBootButton() {
   unsigned long now = millis();
   bool pressed = digitalRead(0) == LOW;
@@ -1348,6 +1604,12 @@ void pollBootButton() {
     // Restart after release so GPIO0 cannot put the board into flashing mode.
     ESP.restart();
   } else if (held < 600) {
+    if (screen == GRIDLEY_SAYS) {
+      bootLastTapAt = 0;
+      if (gridPhase == GRID_READY || gridPhase == GRID_OVER) startGridleySays();
+      else gridleyInput(GRID_PRESS);
+      return;
+    }
     if (bootLastTapAt && now - bootLastTapAt <= BOOT_DOUBLE_TAP_MS) {
       bootLastTapAt = 0;
       playAudioClip();
@@ -1366,6 +1628,7 @@ void drawScreen() {
     case NIGHT_SPINNER: drawSpinner(); break;
     case GRID_MAZE: drawMaze(); break;
     case SOUND_ART: drawSoundArt(); break;
+    case GRIDLEY_SAYS: drawGridleySays(); break;
     case STATUS_SETTINGS: drawSettings(); break;
   }
 }
@@ -1402,13 +1665,17 @@ void updateSpin() {
 
 void handleTap(int x, int y) {
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 151 && y <= 205) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 217 && y <= 271) {
+    if (x >= 84 && x <= 382 && y >= 146 && y <= 194) screen = NIGHT_SPINNER;
+    else if (x >= 84 && x <= 382 && y >= 201 && y <= 249) {
       resetMaze();
       screen = GRID_MAZE;
-    } else if (x >= 84 && x <= 382 && y >= 283 && y <= 337) {
+    } else if (x >= 84 && x <= 382 && y >= 256 && y <= 304) {
       startSoundArt();
       screen = SOUND_ART;
+    } else if (x >= 84 && x <= 382 && y >= 311 && y <= 359) {
+      gridPhase = GRID_READY;
+      gridTouchTracking = false;
+      screen = GRIDLEY_SAYS;
     } else if (x >= 140 && x <= 326 && y >= 380 && y <= 435) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
@@ -1418,6 +1685,9 @@ void handleTap(int x, int y) {
     if (x >= 91 && x <= 184 && y >= 91 && y <= 136) {
       if (screen == SOUND_ART) stopSoundArt();
       screen = LAUNCHER;
+    } else if (screen == GRIDLEY_SAYS) {
+      if ((gridPhase == GRID_READY || gridPhase == GRID_OVER) &&
+          y >= 345 && y <= 420) startGridleySays();
     } else if (screen == NIGHT_SPINNER && x >= 95 && x <= 371 &&
                y >= 347 && y <= 410) {
       startSpin();
@@ -1457,6 +1727,10 @@ void pollTouch() {
   bool pending = touchPending;
   touchPending = false;
   interrupts();
+  if (screen == GRIDLEY_SAYS) {
+    pollGridleyTouch(pending);
+    return;
+  }
   if (!pending) return;
   int16_t x[1] = {}, y[1] = {};
   if (!touch.getPoint(x, y, 1)) return;
@@ -1681,6 +1955,7 @@ void setup() {
   savedSsid = settings.getString("ssid", "");
   savedPassword = settings.getString("password", "");
   audioVolume = settings.getUChar("volume", 60);
+  gridBest = settings.getUShort("gridBest", 0);
   if (audioVolume > 100) audioVolume = 100;
   manualAreaLabel = settings.getString("area", "60612");
   autoBars = settings.getBool("autoBars", true);
@@ -1716,10 +1991,16 @@ void setup() {
   imuReady = imu.begin(Wire, QMI8658_L_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
   if (!imuReady) imuReady = imu.begin(Wire, QMI8658_H_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
   if (imuReady) {
-    imuReady = imu.setAccelFullScaleRange(AccelFullScaleRange::FS_2G) &&
-               imu.setAccelOutputDataRate(56.0f) && imu.enableAccel();
-    Serial.println(imuReady ? "Grid Maze tilt sensor ready" :
-                   "WARNING: Grid Maze tilt sensor setup failed");
+    imuReady = imu.setAccelFullScaleRange(AccelFullScaleRange::FS_4G) &&
+               imu.setAccelOutputDataRate(112.0f) && imu.enableAccel();
+    if (imuReady) {
+      gyroReady = imu.setGyroFullScaleRange(GyroFullScaleRange::FS_1000_DPS) &&
+                  imu.setGyroOutputDataRate(112.0f) && imu.enableGyro();
+    }
+    Serial.println(imuReady ? "Motion accelerometer ready" :
+                   "WARNING: Motion accelerometer setup failed");
+    Serial.println(gyroReady ? "Gyroscope ready" :
+                   "WARNING: Gyroscope unavailable");
   } else Serial.println("WARNING: Grid Maze tilt sensor not found");
 
   audioReady = initAudio();
@@ -1764,6 +2045,7 @@ void loop() {
   }
   updateSoundArt();
   updateMaze();
+  updateGridleySays();
   if (millis() - lastLog > 5000) {
     logStatus();
     lastLog = millis();

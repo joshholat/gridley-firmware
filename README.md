@@ -4,9 +4,10 @@ This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
 The home screen is a bright blue perspective-grid app launcher with a large white
-**GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, **Sound Grid**, and **Settings**. Its prompt is
+**GRIDLEY** title, **Chicago Spinner**, **Grid Maze**, **Sound Grid**,
+**Gridley Says**, and **Settings**. Its prompt is
 "PICK A PROGRAM, USER."
-Settings appears as a smaller utility button below the three programs.
+Settings appears as a smaller utility button below the four programs.
 Chicago Spinner animates and randomly picks one bar from a locally saved list,
 without repeating the immediately previous pick. Once Gridley joins Wi-Fi, it
 looks up bars and pubs in OpenStreetMap within 3.2 km (about 2 miles) of the
@@ -35,6 +36,16 @@ little more tilt, so a normal viewing angle is less likely to move the puck.
 Reaching the exit triggers a short pixel-art explosion and congratulations
 screen, then starts another new maze automatically. If the sensor is
 unavailable, touch control still works.
+
+**Gridley Says** is a quick reaction game inspired by physical command toys.
+Follow each randomly chosen command before the timer runs out: shake the puck,
+flick your wrist, tilt left or right, tap or swipe the touchscreen, or press BOOT
+once. The commands get faster as your score rises; your best score is saved on
+the device. Shake and tilt use the accelerometer, while flick reads the
+gyroscope. Tap **START** or briefly press BOOT to play. A wrong touch or button
+press ends the round, and a missed motion times out. Return the puck toward its
+starting angle between tilt commands. The BOOT button still clears Wi-Fi after
+a three-second hold, even while this game is open.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and
@@ -170,3 +181,11 @@ display, moved the dBFS readout into its center, increased the visual response
 to nearby speech, and replaced the faint Settings icon with a larger white
 gear. The mic ADC remains at the same hardware gain; these changes affect the
 artwork's sensitivity and scale.
+
+## Gridley Says live check, 2026-10-22
+
+The first playable build adds gyroscope flicks, accelerometer shake and tilt,
+touchscreen tap and swipe, and BOOT button commands. It compiled at 47% of the
+program partition, flashed with verification, and booted with the accelerometer,
+gyroscope, speaker, and Wi-Fi ready. Timing and thresholds are initial values
+for play testing and may need adjustment based on how the puck feels in hand.

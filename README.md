@@ -37,7 +37,7 @@ screen, then starts another new maze automatically. If the sensor is
 unavailable, touch control still works.
 
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
-The spokes, central orb, and color pulses react to nearby voices, music, and
+Large rings, rays, and color pulses react to nearby voices, music, and
 other sounds. It adjusts to the room's background noise automatically. The
 microphones are sampled only while Sound Grid is open; tap **BACK** to stop
 listening. The artwork runs entirely on the puck without Wi-Fi or a cloud
@@ -164,3 +164,9 @@ now shows live microphone dBFS. The three programs were regrouped above a
 smaller Settings utility button with an opaque background. In a low-volume
 onboard playback check, roughly -56 to -54 dBFS produced a visible artwork
 level of about 0.25 to 0.56, while quiet readings near -60 dBFS stayed low.
+
+The next pass expanded Sound Grid's rays and rings across more of the round
+display, moved the dBFS readout into its center, increased the visual response
+to nearby speech, and replaced the faint Settings icon with a larger white
+gear. The mic ADC remains at the same hardware gain; these changes affect the
+artwork's sensitivity and scale.

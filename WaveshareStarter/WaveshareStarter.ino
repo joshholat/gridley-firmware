@@ -183,6 +183,7 @@ float soundDbFs = -90;
 unsigned long lastSoundFrame = 0;
 unsigned long lastSoundLog = 0;
 uint32_t soundFrameCount = 0;
+Arduino_Canvas *soundCanvas = nullptr;
 
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
@@ -537,31 +538,54 @@ void drawLauncher() {
   button(84, 283, 298, 54, "SOUND GRID", BLUE);
   // Settings is a small utility control below the three programs. Its solid
   // backing clears the perspective lines so the label stays legible.
-  gfx->fillRoundRect(153, 386, 160, 44, 20, BG);
-  gfx->drawRoundRect(153, 386, 160, 44, 20, PURPLE);
-  gfx->drawCircle(178, 408, 8, PURPLE);
-  gfx->fillCircle(178, 408, 3, PURPLE);
-  gfx->setTextColor(PURPLE);
+  gfx->fillRoundRect(145, 384, 176, 46, 20, BG);
+  gfx->drawRoundRect(145, 384, 176, 46, 20, PURPLE);
+  // Bright gear teeth and label remain visible over the lower grid.
+  for (int tooth = 0; tooth < 8; ++tooth) {
+    float angle = tooth * (2.0f * PI / 8);
+    int innerX = 178 + static_cast<int>(cosf(angle) * 9);
+    int innerY = 407 + static_cast<int>(sinf(angle) * 9);
+    int outerX = 178 + static_cast<int>(cosf(angle) * 14);
+    int outerY = 407 + static_cast<int>(sinf(angle) * 14);
+    gfx->drawLine(innerX, innerY, outerX, outerY, WHITE);
+    gfx->drawLine(innerX + 1, innerY, outerX + 1, outerY, WHITE);
+  }
+  gfx->fillCircle(178, 407, 9, WHITE);
+  gfx->fillCircle(178, 407, 5, BG);
+  gfx->setTextColor(WHITE);
   gfx->setTextSize(2);
-  gfx->setCursor(196, 400);
+  gfx->setCursor(203, 400);
   gfx->print("SETTINGS");
 }
 
 void drawSoundArt() {
   chrome("SOUND GRID");
-  textCentered(micActive ? "MIC LIVE" : "MIC UNAVAILABLE", 145, 1,
-               micActive ? CYAN : MAZE_ENEMY);
+  if (!micActive) textCentered("MIC UNAVAILABLE", 145, 1, MAZE_ENEMY);
   lastSoundFrame = 0;
 }
 
 void drawSoundArtFrame() {
-  // Keep the app title and BACK button intact while refreshing the art.
-  gfx->fillRect(99, 161, 268, 229, BG);
-  const int centerX = 233;
-  const int centerY = 271;
-  for (int radius = 48; radius <= 96; radius += 24) {
-    gfx->drawCircle(centerX, centerY, radius, MAZE_GRID);
+  Arduino_GFX *frameGfx = soundCanvas ?
+      static_cast<Arduino_GFX *>(soundCanvas) : static_cast<Arduino_GFX *>(gfx);
+  // Render the moving art offscreen, then transfer its rectangular region in
+  // one display write. The title remains outside that region.
+  const int offsetX = soundCanvas ? 49 : 0;
+  const int offsetY = soundCanvas ? 87 : 0;
+  frameGfx->fillScreen(BG);
+  if (!soundCanvas) {
+    frameGfx->setTextColor(CYAN);
+    frameGfx->setTextSize(2);
+    frameGfx->setCursor((LCD_WIDTH - 10 * 12) / 2, 65);
+    frameGfx->print("SOUND GRID");
   }
+  frameGfx->drawCircle(233 - offsetX, 233 - offsetY, 224, BLUE);
+  frameGfx->drawCircle(233 - offsetX, 233 - offsetY, 218, PANEL);
+  const int centerX = 233 - offsetX;
+  const int centerY = 263 - offsetY;
+  frameGfx->drawCircle(centerX, centerY, 80, MAZE_GRID);
+  frameGfx->drawCircle(centerX, centerY, 115, GRID_DIM);
+  frameGfx->drawCircle(centerX, centerY, 150, BLUE);
+  frameGfx->drawCircle(centerX, centerY, 175, GRID_DIM);
   uint16_t pulseColor = soundPulse > 0.55f ? WHITE :
                         soundPulse > 0.18f ? PURPLE : BLUE;
   float rotation = soundFrameCount * 0.018f;
@@ -569,31 +593,48 @@ void drawSoundArtFrame() {
     float angle = rotation + i * (2.0f * PI / SOUND_BARS);
     float dx = cosf(angle);
     float dy = sinf(angle);
-    float reach = 72 + 28 * soundBars[i] + 10 * soundPulse;
-    int x1 = centerX + static_cast<int>(dx * 64);
-    int y1 = centerY + static_cast<int>(dy * 64);
+    float reach = 115 + 46 * soundBars[i] + 11 * soundPulse;
+    int x1 = centerX + static_cast<int>(dx * 82);
+    int y1 = centerY + static_cast<int>(dy * 82);
     int x2 = centerX + static_cast<int>(dx * reach);
     int y2 = centerY + static_cast<int>(dy * reach);
-    uint16_t color = i % 4 == 0 ? WHITE : i % 2 == 0 ? PURPLE : CYAN;
-    gfx->drawLine(x1, y1, x2, y2, color);
-    gfx->fillCircle(x2, y2, soundBars[i] > 0.55f ? 3 : 2, color);
+    uint16_t color = soundBars[i] > 0.55f ? WHITE :
+                     i % 4 == 0 ? CYAN : i % 2 == 0 ? PURPLE : BLUE;
+    frameGfx->drawLine(x1, y1, x2, y2, color);
+    frameGfx->drawLine(x1 + 1, y1, x2 + 1, y2, color);
+    frameGfx->fillCircle(x2, y2, soundBars[i] > 0.55f ? 4 : 3, color);
   }
-  int outerRadius = 51 + static_cast<int>(soundLevel * 20 + soundPulse * 8);
-  gfx->drawCircle(centerX, centerY, outerRadius, pulseColor);
-  gfx->drawCircle(centerX, centerY, outerRadius - 2, BLUE);
-  gfx->fillCircle(centerX, centerY, 30 + static_cast<int>(soundLevel * 12), PANEL);
-  gfx->drawCircle(centerX, centerY, 29 + static_cast<int>(soundLevel * 12), CYAN);
-  gfx->fillCircle(centerX, centerY, 12 + static_cast<int>(soundLevel * 12),
-                  soundPulse > 0.5f ? WHITE : CYAN);
-  gfx->fillRoundRect(137, 395, 192, 31, 12, BG);
-  gfx->drawRoundRect(137, 395, 192, 31, 12, BLUE);
-  char levelText[20];
-  snprintf(levelText, sizeof(levelText), "MIC %d dBFS",
+  int outerRadius = 101 + static_cast<int>(soundLevel * 39 + soundPulse * 12);
+  frameGfx->drawCircle(centerX, centerY, outerRadius, pulseColor);
+  frameGfx->drawCircle(centerX, centerY, outerRadius - 2, BLUE);
+  int coreRadius = 46 + static_cast<int>(soundLevel * 20 + soundPulse * 5);
+  frameGfx->fillCircle(centerX, centerY, coreRadius, PANEL);
+  frameGfx->drawCircle(centerX, centerY, coreRadius, CYAN);
+  frameGfx->drawCircle(centerX, centerY, coreRadius - 4, BLUE);
+  char levelText[8];
+  snprintf(levelText, sizeof(levelText), "%d",
            static_cast<int>(roundf(soundDbFs)));
-  gfx->setTextColor(WHITE);
-  gfx->setTextSize(2);
-  gfx->setCursor((LCD_WIDTH - static_cast<int>(strlen(levelText)) * 12) / 2, 402);
-  gfx->print(levelText);
+  frameGfx->setTextColor(WHITE);
+  frameGfx->setTextSize(3);
+  frameGfx->setCursor((LCD_WIDTH - static_cast<int>(strlen(levelText)) * 18) / 2
+                      - offsetX, 240 - offsetY);
+  frameGfx->print(levelText);
+  frameGfx->setTextColor(CYAN);
+  frameGfx->setTextSize(2);
+  frameGfx->setCursor(209 - offsetX, 278 - offsetY);
+  frameGfx->print("dBFS");
+  frameGfx->fillRoundRect(91 - offsetX, 91 - offsetY, 93, 45, 18, PANEL);
+  frameGfx->drawRoundRect(91 - offsetX, 91 - offsetY, 93, 45, 18, BLUE);
+  frameGfx->setTextColor(BLUE);
+  frameGfx->setTextSize(2);
+  frameGfx->setCursor(101 - offsetX, 105 - offsetY);
+  frameGfx->print("< BACK");
+  frameGfx->fillRoundRect(202 - offsetX, 96 - offsetY, 62, 19, 8, BG);
+  frameGfx->setTextColor(CYAN);
+  frameGfx->setTextSize(1);
+  frameGfx->setCursor(209 - offsetX, 101 - offsetY);
+  frameGfx->print("MIC LIVE");
+  if (soundCanvas) soundCanvas->flush();
   ++soundFrameCount;
 }
 
@@ -1142,6 +1183,14 @@ bool startSoundArt() {
     return false;
   }
   audioI2S.setTimeout(40);
+  if (!soundCanvas && displayReady) {
+    soundCanvas = new Arduino_Canvas(368, 356, gfx, 49, 87);
+    if (!soundCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete soundCanvas;
+      soundCanvas = nullptr;
+      Serial.println("WARNING: Sound Grid framebuffer unavailable");
+    }
+  }
   micActive = true;
   soundNoiseFloor = 0;
   soundLevel = soundPulse = 0;
@@ -1194,8 +1243,8 @@ void updateSoundArt() {
     soundNoiseFloor = soundNoiseFloor * 0.94f + rms * 0.06f;
   else
     soundNoiseFloor = soundNoiseFloor * 0.997f + rms * 0.003f;
-  float relative = (rms - soundNoiseFloor * 1.05f) /
-                   (soundNoiseFloor * 0.8f + 25.0f);
+  float relative = (rms - soundNoiseFloor * 1.04f) /
+                   (soundNoiseFloor * 0.55f + 18.0f);
   float absolute = (soundDbFs + 60.0f) / 21.0f;
   float target = constrain(max(relative, absolute), 0.0f, 1.0f);
   if (target > 0.20f && target > soundLevel * 1.35f) soundPulse = 1.0f;
@@ -1209,9 +1258,10 @@ void updateSoundArt() {
       int value = abs(static_cast<int>(micSamples[index * 2 + (useRight ? 1 : 0)]));
       if (value > peak) peak = value;
     }
-    float height = constrain((peak - soundNoiseFloor * 1.8f) /
-                                 (soundNoiseFloor * 3.0f + 75.0f), 0.0f, 1.0f);
-    height = max(height, target * 0.30f);
+    float height = constrain((peak - soundNoiseFloor * 1.5f) /
+                                 (soundNoiseFloor * 2.1f + 55.0f), 0.0f, 1.0f);
+    height = height * (0.25f + target * 0.85f);
+    height = max(height, target * 0.45f);
     soundBars[bar] = height > soundBars[bar] ?
         soundBars[bar] * 0.35f + height * 0.65f :
         soundBars[bar] * 0.70f + height * 0.30f;
@@ -1359,7 +1409,7 @@ void handleTap(int x, int y) {
     } else if (x >= 84 && x <= 382 && y >= 283 && y <= 337) {
       startSoundArt();
       screen = SOUND_ART;
-    } else if (x >= 148 && x <= 318 && y >= 381 && y <= 435) {
+    } else if (x >= 140 && x <= 326 && y >= 380 && y <= 435) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
       screen = STATUS_SETTINGS;

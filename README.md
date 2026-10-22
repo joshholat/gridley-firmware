@@ -4,10 +4,10 @@ This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
 The home screen is a bright blue perspective-grid app launcher with a large
-white **GRIDLEY** title, **Grid Maze**, **Sound Grid**, **Gridley Says**, and
-**Settings**. Its prompt is "PICK A PROGRAM, USER." Settings appears as a
-smaller utility button below the three programs and shows battery, USB,
-charging, Wi-Fi, volume, and firmware status.
+white **GRIDLEY** title, **Grid Maze**, **Sound Grid**, **Gridley Says**,
+**Disc Defender**, and **Settings**. Its prompt is "PICK A PROGRAM, USER."
+Settings appears as a smaller utility button below the four programs and shows
+battery, USB, charging, Wi-Fi, volume, and firmware status.
 
 Tap a launcher button to open a program and **BACK** to return.
 
@@ -32,6 +32,13 @@ press ends the round, and a missed motion times out. Return the puck toward its
 starting angle between tilt commands. The BOOT button still clears Wi-Fi after
 a three-second hold, even while this game is open.
 
+**Disc Defender** is a quick arcade game about protecting the glowing core.
+Twist the puck to move the shield around its ring, then tap the touchscreen or
+press BOOT to parry an incoming pink shot. Precise parries earn three points;
+other catches earn one. Build a streak, protect three hit points, and beat the
+saved high score. The speaker makes short arcade tones on hits and parries.
+If the gyroscope is unavailable, touch near the outer ring to aim.
+
 **Sound Grid** turns the two onboard microphones into a live neon artwork.
 Large rings, rays, and color pulses react to nearby voices, music, and
 other sounds. It adjusts to the room's background noise automatically. The
@@ -51,11 +58,12 @@ a simple device page.
 When connected, hold the **BOOT** button for three seconds to clear the saved
 Wi-Fi details and show the setup network again.
 
-Double tap **BOOT** (two quick press-and-release actions, within about 450 ms)
-to play the locally installed sound through the built-in speaker. The sound is
-stored in the firmware, so playback works without Wi-Fi. A single tap has no
-action. The three-second Wi-Fi reset now waits until BOOT is released before
-restarting, preventing an accidental entry into flashing mode.
+Outside Gridley Says and Disc Defender, double tap **BOOT** (two quick
+press-and-release actions, within about 450 ms) to play the locally installed
+sound through the built-in speaker. The sound is stored in the firmware, so
+playback works without Wi-Fi. A single tap has no action there. The
+three-second Wi-Fi reset waits until BOOT is released before restarting,
+preventing an accidental entry into flashing mode.
 
 In **Settings**, tap the volume bar to choose a level from 0 to 100 in 5%
 increments, or use the **−** and **+** buttons to change it by 5%. Changes take

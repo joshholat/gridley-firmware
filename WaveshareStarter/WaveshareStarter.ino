@@ -42,7 +42,8 @@ I2SClass audioI2S;
 es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
-enum AppScreen { LAUNCHER, GRID_MAZE, SOUND_ART, GRIDLEY_SAYS, STATUS_SETTINGS };
+enum AppScreen { LAUNCHER, GRID_MAZE, SOUND_ART, GRIDLEY_SAYS,
+                 DISC_DEFENDER, STATUS_SETTINGS };
 NetworkMode networkMode = CONNECTING;
 AppScreen screen = LAUNCHER;
 bool mdnsReady = false;
@@ -174,6 +175,27 @@ int gridTouchStartY = 0;
 constexpr int GRID_TIMER_SEGMENTS = 16;
 int gridLastTimerSegments = -1;
 
+enum DiscPhase : uint8_t { DISC_READY, DISC_PLAYING, DISC_OVER };
+DiscPhase discPhase = DISC_READY;
+uint16_t discScore = 0;
+uint16_t discBest = 0;
+uint16_t discStreak = 0;
+uint8_t discLives = 3;
+float discShieldAngle = -PI / 2;
+float discShotAngle = -PI / 2;
+float discShotRadius = 120;
+bool discShotActive = false;
+uint32_t discLastUpdateAt = 0;
+uint32_t discLastFrameAt = 0;
+uint32_t discNextShotAt = 0;
+uint32_t discFeedbackUntil = 0;
+uint8_t discFeedback = 0;
+Arduino_Canvas *discCanvas = nullptr;
+bool discCanvasTried = false;
+uint32_t discTonePhase = 0;
+uint32_t discToneStep = 0;
+uint32_t discToneFramesLeft = 0;
+
 constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
 constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
 constexpr uint32_t BOOT_DOUBLE_TAP_MS = 450;
@@ -276,9 +298,10 @@ void drawLauncher() {
   headlineCentered("GRIDLEY", 63);
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
-  button(84, 160, 298, 54, "GRID MAZE", MAZE_GOLD);
-  button(84, 223, 298, 54, "SOUND GRID", BLUE);
-  button(84, 286, 298, 54, "GRIDLEY SAYS", PURPLE);
+  button(84, 146, 298, 48, "GRID MAZE", MAZE_GOLD);
+  button(84, 201, 298, 48, "SOUND GRID", BLUE);
+  button(84, 256, 298, 48, "GRIDLEY SAYS", PURPLE);
+  button(84, 311, 298, 48, "DISC DEFENDER", CYAN);
   // Settings is a small utility control below the programs. Its solid
   // backing clears the perspective lines so the label stays legible.
   gfx->fillRoundRect(145, 384, 176, 46, 20, BG);
@@ -1012,6 +1035,7 @@ void playAudioClip() {
     return;
   }
   audioOffset = 0;
+  discToneFramesLeft = 0;
   audioPowerDownAt = 0;
   audioPlaying = true;
   digitalWrite(AUDIO_PA, HIGH);
@@ -1019,6 +1043,15 @@ void playAudioClip() {
 #else
   Serial.println("BOOT double tap: run tools/prepare_audio.py to add a clip");
 #endif
+}
+
+void playDiscTone(uint16_t frequency, uint16_t durationMs) {
+  if (!audioReady || !audioVolume || micActive || audioPlaying) return;
+  discTonePhase = 0;
+  discToneStep = (static_cast<uint64_t>(frequency) << 32) / AUDIO_SAMPLE_RATE;
+  discToneFramesLeft = AUDIO_SAMPLE_RATE * durationMs / 1000;
+  audioPowerDownAt = 0;
+  digitalWrite(AUDIO_PA, HIGH);
 }
 
 void pumpAudio() {
@@ -1033,12 +1066,27 @@ void pumpAudio() {
       Serial.println("Sound finished");
     }
   }
+#endif
+  if (!audioPlaying && discToneFramesLeft) {
+    int16_t samples[256 * 2];
+    uint32_t frames = min(discToneFramesLeft, uint32_t(256));
+    for (uint32_t i = 0; i < frames; ++i) {
+      int16_t level = min(discToneFramesLeft - i, uint32_t(64)) * 70;
+      int16_t sample = discTonePhase & 0x80000000 ? level : -level;
+      samples[i * 2] = sample;
+      samples[i * 2 + 1] = sample;
+      discTonePhase += discToneStep;
+    }
+    size_t written = audioI2S.write(reinterpret_cast<uint8_t *>(samples),
+                                    frames * 4);
+    discToneFramesLeft -= min(frames, static_cast<uint32_t>(written / 4));
+    if (!discToneFramesLeft) audioPowerDownAt = millis() + 100;
+  }
   if (audioPowerDownAt &&
       static_cast<int32_t>(millis() - audioPowerDownAt) >= 0) {
     digitalWrite(AUDIO_PA, LOW);
     audioPowerDownAt = 0;
   }
-#endif
 }
 
 const char *gridMoveLabel(GridMove move) {
@@ -1357,6 +1405,197 @@ void pollGridleyTouch(bool pending) {
   }
 }
 
+float discAngleDistance(float a, float b) {
+  return fabsf(atan2f(sinf(a - b), cosf(a - b)));
+}
+
+void spawnDiscShot() {
+  discShotAngle = discScore == 0 ? -PI / 2 :
+      (esp_random() % 6283) / 1000.0f - PI;
+  discShotRadius = 112;
+  discShotActive = true;
+}
+
+void startDiscDefender() {
+  discPhase = DISC_PLAYING;
+  discScore = 0;
+  discStreak = 0;
+  discLives = 3;
+  discShieldAngle = -PI / 2;
+  discFeedback = 0;
+  discFeedbackUntil = 0;
+  discLastUpdateAt = millis();
+  discLastFrameAt = 0;
+  spawnDiscShot();
+  screenDirty = true;
+}
+
+void finishDiscDefender() {
+  discPhase = DISC_OVER;
+  discShotActive = false;
+  if (discScore > discBest) {
+    discBest = discScore;
+    settings.putUShort("discBest", discBest);
+  }
+  Serial.printf("Disc Defender over: %u, best %u\n", discScore, discBest);
+  playDiscTone(180, 220);
+  screenDirty = true;
+}
+
+void discParry(int x, int y) {
+  if (discPhase != DISC_PLAYING) return;
+  if (!gyroReady && x >= 0) {
+    float dx = x - 233;
+    float dy = y - 282;
+    if (dx * dx + dy * dy > 55 * 55)
+      discShieldAngle = atan2f(dy, dx);
+  }
+  uint32_t now = millis();
+  float angleError = discAngleDistance(discShieldAngle, discShotAngle);
+  float radiusError = fabsf(discShotRadius - 89);
+  if (discShotActive && radiusError <= 20 && angleError <= 0.39f) {
+    bool perfect = radiusError <= 9 && angleError <= 0.16f;
+    discScore += perfect ? 3 : 1;
+    ++discStreak;
+    discShotActive = false;
+    discNextShotAt = now + 400;
+    discFeedback = perfect ? 2 : 1;
+    discFeedbackUntil = now + 350;
+    playDiscTone(perfect ? 880 : 620, perfect ? 150 : 100);
+    Serial.printf("Disc Defender %s: score %u, streak %u\n",
+                  perfect ? "perfect" : "parry", discScore, discStreak);
+    screenDirty = true;
+  } else if (discShotActive) {
+    discFeedback = 4;
+    discFeedbackUntil = now + 260;
+  }
+}
+
+void drawDiscFrame() {
+  if (!discCanvasTried && displayReady) {
+    discCanvasTried = true;
+    discCanvas = new Arduino_Canvas(296, 240, gfx, 85, 162);
+    if (!discCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+      delete discCanvas;
+      discCanvas = nullptr;
+      Serial.println("WARNING: Disc Defender framebuffer unavailable");
+    }
+  }
+  Arduino_GFX *field = discCanvas ?
+      static_cast<Arduino_GFX *>(discCanvas) : static_cast<Arduino_GFX *>(gfx);
+  int ox = discCanvas ? 0 : 85;
+  int oy = discCanvas ? 0 : 162;
+  int cx = ox + 148;
+  int cy = oy + 120;
+  if (discCanvas) field->fillScreen(BG);
+  else field->fillRect(ox, oy, 296, 240, BG);
+
+  for (int spoke = 0; spoke < 12; ++spoke) {
+    float angle = spoke * (PI / 6);
+    field->drawLine(cx + cosf(angle) * 46, cy + sinf(angle) * 46,
+                    cx + cosf(angle) * 117, cy + sinf(angle) * 117, GRID_DIM);
+  }
+  field->drawCircle(cx, cy, 118, BLUE);
+  field->drawCircle(cx, cy, 89, GRID_MID);
+  field->drawCircle(cx, cy, 43, GRID_DIM);
+  field->fillCircle(cx, cy, 23, PANEL);
+  field->drawCircle(cx, cy, 23, CYAN);
+  field->fillCircle(cx, cy, 7, WHITE);
+
+  for (int step = -6; step <= 6; ++step) {
+    float angle = discShieldAngle + step * 0.055f;
+    field->fillCircle(cx + cosf(angle) * 89,
+                      cy + sinf(angle) * 89, 5,
+                      abs(step) < 3 ? WHITE : CYAN);
+  }
+
+  if (discShotActive) {
+    for (int trail = 2; trail >= 1; --trail) {
+      float radius = min(discShotRadius + trail * 9, 118.0f);
+      field->fillCircle(cx + cosf(discShotAngle) * radius,
+                        cy + sinf(discShotAngle) * radius, 2, PURPLE);
+    }
+    int shotX = cx + cosf(discShotAngle) * discShotRadius;
+    int shotY = cy + sinf(discShotAngle) * discShotRadius;
+    field->fillRect(shotX - 6, shotY - 6, 13, 13, MAZE_ENEMY);
+    field->fillRect(shotX - 2, shotY - 2, 5, 5, WHITE);
+  }
+  if (discFeedback && millis() < discFeedbackUntil) {
+    const char *label = discFeedback == 2 ? "PERFECT +3" :
+                        discFeedback == 1 ? "PARRY +1" :
+                        discFeedback == 3 ? "CORE HIT" : "AIM + TIME";
+    int width = strlen(label) * 12;
+    field->fillRoundRect(cx - width / 2 - 12, cy - 13,
+                         width + 24, 29, 8, PANEL);
+    field->setTextSize(2);
+    field->setTextColor(discFeedback == 3 ? MAZE_ENEMY : CYAN);
+    field->setCursor(cx - width / 2, cy - 6);
+    field->print(label);
+  }
+  if (discCanvas) discCanvas->flush();
+  discLastFrameAt = millis();
+}
+
+void drawDiscDefender() {
+  chrome("DISC DEFENDER");
+  if (discPhase == DISC_READY) {
+    textCentered("DEFEND THE CORE", 198, 2, WHITE);
+    textCentered(gyroReady ? "TWIST TO AIM" : "TOUCH EDGE TO AIM",
+                 237, 2, CYAN);
+    textCentered("TAP OR BUTTON TO PARRY", 266, 2, WHITE);
+    textCentered("THREE HITS TO LOSE", 292, 2, MUTED);
+    button(101, 352, 264, 55, "START", CYAN);
+  } else if (discPhase == DISC_OVER) {
+    textCentered("CORE DOWN", 205, 3, MAZE_ENEMY);
+    textCentered("SCORE " + String(discScore), 257, 2, WHITE);
+    textCentered("BEST " + String(discBest), 283, 2, CYAN);
+    button(101, 352, 264, 55, "TRY AGAIN", CYAN);
+  } else {
+    textCentered("SCORE " + String(discScore) + "   HP " + String(discLives),
+                 139, 2, WHITE);
+    drawDiscFrame();
+    textCentered("STREAK " + String(discStreak) + "  /  TWIST + TAP",
+                 423, 1, MUTED);
+  }
+  if (discPhase != DISC_PLAYING)
+    textCentered("< BACK TO THE GRID", 423, 1, MUTED);
+}
+
+void updateDiscDefender() {
+  if (screen != DISC_DEFENDER || discPhase != DISC_PLAYING || !displayReady) return;
+  uint32_t now = millis();
+  uint32_t elapsed = now - discLastUpdateAt;
+  if (elapsed < 25) return;
+  discLastUpdateAt = now;
+  float seconds = min(elapsed, uint32_t(60)) / 1000.0f;
+  if (gyroReady) {
+    GyroscopeData gyro;
+    if (imu.readGyro(gyro) && fabsf(gyro.dps.z) > 7)
+      discShieldAngle -= gyro.dps.z * (PI / 180.0f) * seconds;
+  }
+  if (discShotActive) {
+    float speed = 31 + min(discScore, uint16_t(20)) * 0.7f;
+    discShotRadius -= speed * seconds;
+    if (discShotRadius <= 28) {
+      discShotActive = false;
+      discStreak = 0;
+      --discLives;
+      if (!discLives) {
+        finishDiscDefender();
+        return;
+      }
+      discFeedback = 3;
+      discFeedbackUntil = now + 420;
+      discNextShotAt = now + 550;
+      playDiscTone(230, 150);
+      screenDirty = true;
+    }
+  } else if (static_cast<int32_t>(now - discNextShotAt) >= 0) {
+    spawnDiscShot();
+  }
+  if (!screenDirty && now - discLastFrameAt >= 33) drawDiscFrame();
+}
+
 void pollBootButton() {
   unsigned long now = millis();
   bool pressed = digitalRead(0) == LOW;
@@ -1388,6 +1627,12 @@ void pollBootButton() {
       else gridleyInput(GRID_PRESS);
       return;
     }
+    if (screen == DISC_DEFENDER) {
+      bootLastTapAt = 0;
+      if (discPhase == DISC_PLAYING) discParry(-1, -1);
+      else startDiscDefender();
+      return;
+    }
     if (bootLastTapAt && now - bootLastTapAt <= BOOT_DOUBLE_TAP_MS) {
       bootLastTapAt = 0;
       playAudioClip();
@@ -1406,6 +1651,7 @@ void drawScreen() {
     case GRID_MAZE: drawMaze(); break;
     case SOUND_ART: drawSoundArt(); break;
     case GRIDLEY_SAYS: drawGridleySays(); break;
+    case DISC_DEFENDER: drawDiscDefender(); break;
     case STATUS_SETTINGS: drawSettings(); break;
   }
 }
@@ -1413,16 +1659,19 @@ void drawScreen() {
 void handleTap(int x, int y) {
   AppScreen previousScreen = screen;
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 160 && y <= 214) {
+    if (x >= 84 && x <= 382 && y >= 146 && y <= 194) {
       resetMaze();
       screen = GRID_MAZE;
-    } else if (x >= 84 && x <= 382 && y >= 223 && y <= 277) {
+    } else if (x >= 84 && x <= 382 && y >= 201 && y <= 249) {
       startSoundArt();
       screen = SOUND_ART;
-    } else if (x >= 84 && x <= 382 && y >= 286 && y <= 340) {
+    } else if (x >= 84 && x <= 382 && y >= 256 && y <= 304) {
       gridPhase = GRID_READY;
       gridTouchTracking = false;
       screen = GRIDLEY_SAYS;
+    } else if (x >= 84 && x <= 382 && y >= 311 && y <= 359) {
+      discPhase = DISC_READY;
+      screen = DISC_DEFENDER;
     } else if (x >= 140 && x <= 326 && y >= 380 && y <= 435) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();
@@ -1435,6 +1684,10 @@ void handleTap(int x, int y) {
     } else if (screen == GRIDLEY_SAYS) {
       if ((gridPhase == GRID_READY || gridPhase == GRID_OVER) &&
           y >= 345 && y <= 420) startGridleySays();
+    } else if (screen == DISC_DEFENDER) {
+      if (discPhase == DISC_PLAYING) discParry(x, y);
+      else if (x >= 101 && x <= 365 && y >= 352 && y <= 407)
+        startDiscDefender();
     } else if (screen == GRID_MAZE) {
       if (mazeWon || mazeCaught) return;
       if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
@@ -1600,6 +1853,7 @@ void setup() {
   savedPassword = settings.getString("password", "");
   audioVolume = settings.getUChar("volume", 60);
   gridBest = settings.getUShort("gridBest", 0);
+  discBest = settings.getUShort("discBest", 0);
   if (audioVolume > 100) audioVolume = 100;
 
   Wire.begin(IIC_SDA, IIC_SCL);
@@ -1679,6 +1933,7 @@ void loop() {
   updateSoundArt();
   updateMaze();
   updateGridleySays();
+  updateDiscDefender();
   if (millis() - lastLog > 5000) {
     logStatus();
     lastLog = millis();

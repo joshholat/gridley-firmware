@@ -4,8 +4,8 @@ This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
 aluminum-case board. It is not for the similar 1.75 board without the C suffix.
 
 The home screen is a bright blue perspective-grid app launcher with a large
-white **GRIDLEY** title, **Grid Maze**, **Sound Grid**, **Gridley Says**,
-**Disc Defender**, and **Settings**. Its prompt is "PICK A PROGRAM, USER."
+white **GRIDLEY** title, **Grid Maze**, **Disc Defender**, **Gridley Says**,
+**Sound Grid**, and **Settings**. Its prompt is "PICK A PROGRAM, USER."
 Settings appears as a smaller utility button below the four programs and shows
 battery, USB, charging, Wi-Fi, volume, and firmware status.
 

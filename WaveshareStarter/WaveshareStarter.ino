@@ -334,9 +334,9 @@ void drawLauncher() {
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
   button(84, 146, 298, 48, "GRID MAZE", MAZE_GOLD);
-  button(84, 201, 298, 48, "SOUND GRID", BLUE);
+  button(84, 201, 298, 48, "DISC DEFENDER", CYAN);
   button(84, 256, 298, 48, "GRIDLEY SAYS", PURPLE);
-  button(84, 311, 298, 48, "DISC DEFENDER", CYAN);
+  button(84, 311, 298, 48, "SOUND GRID", BLUE);
   // Settings is a small utility control below the programs. Its solid
   // backing clears the perspective lines so the label stays legible.
   gfx->fillRoundRect(145, 384, 176, 46, 20, BG);
@@ -2053,15 +2053,15 @@ void handleTap(int x, int y) {
       resetMaze();
       screen = GRID_MAZE;
     } else if (x >= 84 && x <= 382 && y >= 201 && y <= 249) {
-      startSoundArt();
-      screen = SOUND_ART;
+      discPhase = DISC_READY;
+      screen = DISC_DEFENDER;
     } else if (x >= 84 && x <= 382 && y >= 256 && y <= 304) {
       gridPhase = GRID_READY;
       gridTouchTracking = false;
       screen = GRIDLEY_SAYS;
     } else if (x >= 84 && x <= 382 && y >= 311 && y <= 359) {
-      discPhase = DISC_READY;
-      screen = DISC_DEFENDER;
+      startSoundArt();
+      screen = SOUND_ART;
     } else if (x >= 140 && x <= 326 && y >= 380 && y <= 435) {
       settingsBatterySnapshot = batteryText();
       settingsPowerSnapshot = powerStatusText();

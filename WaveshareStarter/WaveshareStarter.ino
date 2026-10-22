@@ -3,22 +3,17 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <ESP_I2S.h>
-#include <HTTPClient.h>
 #include <math.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <Wire.h>
-#include <freertos/queue.h>
-#include <time.h>
 #include <ImuDrv.hpp>
 #include "TouchDrvCST.hpp"
 #include "es7210.h"
 #include "es8311.h"
 #include "esp_ota_ops.h"
 #include "esp_random.h"
-#include "osm_root_ca.h"
 #include "pin_config.h"
 #include "XPowersLib.h"
 
@@ -47,53 +42,10 @@ I2SClass audioI2S;
 es8311_handle_t audioCodec = nullptr;
 
 enum NetworkMode { CONNECTING, SETUP, CONNECTED };
-enum AppScreen { LAUNCHER, NIGHT_SPINNER, GRID_MAZE, SOUND_ART, GRIDLEY_SAYS, STATUS_SETTINGS };
+enum AppScreen { LAUNCHER, GRID_MAZE, SOUND_ART, GRIDLEY_SAYS, STATUS_SETTINGS };
 NetworkMode networkMode = CONNECTING;
 AppScreen screen = LAUNCHER;
-
-struct Bar {
-  String name;
-  String address;
-};
-constexpr uint8_t MAX_BARS = 16;
-Bar barOptions[MAX_BARS];
-uint8_t barCount = 0;
-String areaLabel = "60612";
-String manualAreaLabel = "60612";
-bool autoBars = true;
-bool usingOsmBars = false;
 bool mdnsReady = false;
-String barFetchStatus = "Waiting for Wi-Fi";
-unsigned long nextBarRefreshAt = 0;
-bool barFetchRunning = false;
-
-// The 60612 ZIP centroid is only an approximate home location. Gridley has no GPS.
-constexpr float BAR_LATITUDE = 41.8812f;
-constexpr float BAR_LONGITUDE = -87.6865f;
-constexpr int BAR_RADIUS_METERS = 3200;
-constexpr uint32_t BAR_REFRESH_MS = 24UL * 60UL * 60UL * 1000UL;
-constexpr uint32_t BAR_RETRY_MS = 60UL * 60UL * 1000UL;
-constexpr uint32_t BAR_MANUAL_MIN_MS = 5UL * 60UL * 1000UL;
-unsigned long lastBarRequestAt = 0;
-
-struct FetchedBar {
-  char name[33];
-  char address[46];
-};
-struct BarFetchResult {
-  bool success;
-  uint8_t count;
-  FetchedBar bars[MAX_BARS];
-  char error[64];
-};
-QueueHandle_t barFetchQueue = nullptr;
-
-const char *DEFAULT_BARS =
-    "Cobra Lounge|235 N Ashland Ave\n"
-    "The Press Room|1134 W Washington Blvd\n"
-    "Inner Town Pub|1935 W Thomas St\n"
-    "Empty Bottle|1035 N Western Ave\n"
-    "Sportsman's Club|948 N Western Ave\n";
 
 constexpr uint16_t BG = 0x0000;
 constexpr uint16_t CYAN = 0x07FF;
@@ -227,13 +179,6 @@ constexpr uint32_t BOOT_DEBOUNCE_MS = 35;
 constexpr uint32_t BOOT_DOUBLE_TAP_MS = 450;
 constexpr uint32_t BOOT_LONG_PRESS_MS = 3000;
 
-int selectedBar = -1;
-int displayedBar = -1;
-int nextBar = -1;
-uint8_t spinFrame = 0;
-bool spinning = false;
-unsigned long lastSpinFrame = 0;
-
 void IRAM_ATTR onTouchInterrupt() { touchPending = true; }
 
 String makeSetupPassword() {
@@ -243,245 +188,6 @@ String makeSetupPassword() {
     result += alphabet[esp_random() % (sizeof(alphabet) - 1)];
   }
   return result;
-}
-
-bool loadBars(const String &raw) {
-  Bar parsed[MAX_BARS];
-  uint8_t count = 0;
-  int start = 0;
-  while (start < raw.length()) {
-    int end = raw.indexOf('\n', start);
-    if (end < 0) end = raw.length();
-    String line = raw.substring(start, end);
-    line.trim();
-    start = end + 1;
-    if (line.isEmpty()) continue;
-    int separator = line.indexOf('|');
-    if (separator < 1 || line.indexOf('|', separator + 1) >= 0 || count >= MAX_BARS) {
-      return false;
-    }
-    String name = line.substring(0, separator);
-    String address = line.substring(separator + 1);
-    name.trim();
-    address.trim();
-    if (name.isEmpty() || address.isEmpty() || name.length() > 32 ||
-        address.length() > 45) return false;
-    parsed[count++] = {name, address};
-  }
-  if (count == 0) return false;
-  for (uint8_t i = 0; i < count; ++i) barOptions[i] = parsed[i];
-  barCount = count;
-  return true;
-}
-
-String barListText() {
-  String result;
-  for (uint8_t i = 0; i < barCount; ++i) {
-    result += barOptions[i].name + " | " + barOptions[i].address + "\n";
-  }
-  return result;
-}
-
-void useManualBars() {
-  if (!loadBars(settings.getString("bars", DEFAULT_BARS))) loadBars(DEFAULT_BARS);
-  areaLabel = manualAreaLabel;
-  usingOsmBars = false;
-  selectedBar = displayedBar = -1;
-  spinning = false;
-  screenDirty = true;
-}
-
-void useCachedOsmBars() {
-  if (loadBars(settings.getString("osmBars", ""))) {
-    areaLabel = "60612";
-    usingOsmBars = true;
-    selectedBar = displayedBar = -1;
-    spinning = false;
-    screenDirty = true;
-  } else {
-    useManualBars();
-  }
-}
-
-String formEncode(const String &input) {
-  const char hex[] = "0123456789ABCDEF";
-  String encoded;
-  encoded.reserve(input.length() * 3);
-  for (size_t i = 0; i < input.length(); ++i) {
-    uint8_t c = static_cast<uint8_t>(input[i]);
-    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-      encoded += static_cast<char>(c);
-    } else {
-      encoded += '%';
-      encoded += hex[c >> 4];
-      encoded += hex[c & 15];
-    }
-  }
-  return encoded;
-}
-
-bool parseOsmBars(const String &csv, BarFetchResult &result) {
-  int start = csv.indexOf('\n');
-  if (start < 0) return false;
-  String header = csv.substring(0, start);
-  header.trim();
-  if (!header.startsWith("name\t") ||
-      header.indexOf("addr:housenumber") < 0 ||
-      header.indexOf("addr:street") < 0) return false;
-
-  int valid = 0;
-  ++start;
-  while (start < csv.length()) {
-    int end = csv.indexOf('\n', start);
-    if (end < 0) end = csv.length();
-    String line = csv.substring(start, end);
-    start = end + 1;
-    if (line.endsWith("\r")) line.remove(line.length() - 1);
-    if (line.isEmpty()) continue;
-    int a = line.indexOf('\t');
-    int b = a < 0 ? -1 : line.indexOf('\t', a + 1);
-    int c = b < 0 ? -1 : line.indexOf('\t', b + 1);
-    if (a < 0 || b < 0 || c < 0 || line.indexOf('\t', c + 1) >= 0) continue;
-    String name = line.substring(0, a);
-    String number = line.substring(a + 1, b);
-    String street = line.substring(b + 1, c);
-    String full = line.substring(c + 1);
-    name.trim(); number.trim(); street.trim(); full.trim();
-    if (name.isEmpty() || name.length() > 32 || name.indexOf('|') >= 0) continue;
-    String address = full;
-    if (address.isEmpty()) address = number + (number.isEmpty() || street.isEmpty() ? "" : " ") + street;
-    if (address.isEmpty()) address = "Address not listed";
-    address.replace('|', '/');
-    if (address.length() > 45) address = address.substring(0, 45);
-
-    bool duplicate = false;
-    for (uint8_t i = 0; i < result.count; ++i) {
-      if (name.equalsIgnoreCase(result.bars[i].name) &&
-          address.equalsIgnoreCase(result.bars[i].address)) {
-        duplicate = true;
-        break;
-      }
-    }
-    if (duplicate) continue;
-    ++valid;
-    uint32_t slot = result.count < MAX_BARS ? result.count : esp_random() % valid;
-    if (slot < MAX_BARS) {
-      name.toCharArray(result.bars[slot].name, sizeof(result.bars[slot].name));
-      address.toCharArray(result.bars[slot].address, sizeof(result.bars[slot].address));
-      if (result.count < MAX_BARS) ++result.count;
-    }
-  }
-  return result.count > 0;
-}
-
-void fetchOsmBarsTask(void *) {
-  BarFetchResult result = {};
-  unsigned long clockStarted = millis();
-  while (time(nullptr) < 1700000000 && millis() - clockStarted < 12000) {
-    vTaskDelay(pdMS_TO_TICKS(250));
-  }
-  if (time(nullptr) < 1700000000) {
-    snprintf(result.error, sizeof(result.error), "Internet unavailable; using saved bars");
-  } else {
-    WiFiClientSecure client;
-    client.setCACert(OSM_ROOT_CA);
-    const String query =
-        "[out:csv(name,\"addr:housenumber\",\"addr:street\",\"addr:full\")][timeout:20];"
-        "nwr(around:" + String(BAR_RADIUS_METERS) + "," +
-        String(BAR_LATITUDE, 4) + "," + String(BAR_LONGITUDE, 4) +
-        ")[\"amenity\"~\"^(bar|pub)$\"][\"name\"];out 120;";
-    const String body = "data=" + formEncode(query);
-    const char *servers[] = {
-        "https://overpass.private.coffee/api/interpreter",
-        "https://overpass-api.de/api/interpreter"};
-    for (const char *server : servers) {
-      HTTPClient http;
-      http.setConnectTimeout(7000);
-      http.setTimeout(25000);
-      if (!http.begin(client, server)) {
-        snprintf(result.error, sizeof(result.error), "Map service unavailable; using saved bars");
-        continue;
-      }
-      http.setUserAgent("Gridley/1.0 (personal ESP32-S3 bar spinner)");
-      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      int code = http.POST(body);
-      if (code == HTTP_CODE_OK && http.getSize() <= 30000) {
-        String csv = http.getString();
-        result.success = csv.length() <= 30000 && parseOsmBars(csv, result);
-        if (!result.success) snprintf(result.error, sizeof(result.error), "Map data unavailable; using saved bars");
-      } else {
-        snprintf(result.error, sizeof(result.error), "Map service unavailable; using saved bars");
-      }
-      if (!result.success) {
-        char tlsError[96] = {};
-        client.lastError(tlsError, sizeof(tlsError));
-        Serial.printf("OpenStreetMap %s: HTTP %d (%s); TLS: %s\n", server,
-                      code, HTTPClient::errorToString(code).c_str(), tlsError);
-      }
-      http.end();
-      if (result.success || code == 406 || code == 429) break;
-    }
-  }
-  xQueueSend(barFetchQueue, &result, portMAX_DELAY);
-  vTaskDelete(nullptr);
-}
-
-void processBarFetchResult() {
-  if (!barFetchQueue || spinning) return;
-  BarFetchResult result;
-  if (xQueueReceive(barFetchQueue, &result, 0) != pdPASS) return;
-  barFetchRunning = false;
-  nextBarRefreshAt = millis() + (result.success ? BAR_REFRESH_MS : BAR_RETRY_MS);
-  if (!result.success) {
-    barFetchStatus = result.error;
-    Serial.println("OpenStreetMap refresh: " + barFetchStatus);
-    return;
-  }
-  String saved;
-  for (uint8_t i = 0; i < result.count; ++i) {
-    saved += String(result.bars[i].name) + " | " + result.bars[i].address + "\n";
-  }
-  settings.putString("osmBars", saved);
-  barFetchStatus = "Updated from OpenStreetMap";
-  Serial.printf("OpenStreetMap refresh: %u bars\n", result.count);
-  if (autoBars && loadBars(saved)) {
-    usingOsmBars = true;
-    areaLabel = "60612";
-    selectedBar = displayedBar = -1;
-    screenDirty = true;
-  }
-}
-
-void maybeRefreshBars() {
-  if (!autoBars || networkMode != CONNECTED || barFetchRunning ||
-      !barFetchQueue || screen == GRID_MAZE ||
-      static_cast<int32_t>(millis() - nextBarRefreshAt) < 0 ||
-      (lastBarRequestAt && millis() - lastBarRequestAt < BAR_MANUAL_MIN_MS)) return;
-  barFetchRunning = true;
-  lastBarRequestAt = millis();
-  barFetchStatus = "Refreshing from OpenStreetMap...";
-  if (xTaskCreatePinnedToCore(fetchOsmBarsTask, "osm-bars", 12288, nullptr,
-                              1, nullptr, 0) != pdPASS) {
-    barFetchRunning = false;
-    barFetchStatus = "Could not start map refresh";
-    nextBarRefreshAt = millis() + BAR_RETRY_MS;
-  }
-}
-
-String htmlEscape(const String &raw) {
-  String escaped;
-  escaped.reserve(raw.length() + 20);
-  for (size_t i = 0; i < raw.length(); ++i) {
-    switch (raw[i]) {
-      case '&': escaped += "&amp;"; break;
-      case '<': escaped += "&lt;"; break;
-      case '>': escaped += "&gt;"; break;
-      case '"': escaped += "&quot;"; break;
-      case '\'': escaped += "&#39;"; break;
-      default: escaped += raw[i];
-    }
-  }
-  return escaped;
 }
 
 void textCentered(const String &value, int y, uint8_t size = 2,
@@ -570,11 +276,10 @@ void drawLauncher() {
   headlineCentered("GRIDLEY", 63);
   gfx->fillRoundRect(91, 100, 284, 37, 12, BG);
   textCentered("PICK A PROGRAM, USER", 110, 2, CYAN);
-  button(84, 146, 298, 48, "CHICAGO SPINNER", CYAN);
-  button(84, 201, 298, 48, "GRID MAZE", MAZE_GOLD);
-  button(84, 256, 298, 48, "SOUND GRID", BLUE);
-  button(84, 311, 298, 48, "GRIDLEY SAYS", PURPLE);
-  // Settings is a small utility control below the four programs. Its solid
+  button(84, 160, 298, 54, "GRID MAZE", MAZE_GOLD);
+  button(84, 223, 298, 54, "SOUND GRID", BLUE);
+  button(84, 286, 298, 54, "GRIDLEY SAYS", PURPLE);
+  // Settings is a small utility control below the programs. Its solid
   // backing clears the perspective lines so the label stays legible.
   gfx->fillRoundRect(145, 384, 176, 46, 20, BG);
   gfx->drawRoundRect(145, 384, 176, 46, 20, PURPLE);
@@ -1071,29 +776,6 @@ void updateMaze() {
   lastMazeStep = now;
 }
 
-void drawSpinner() {
-  chrome("NIGHT SPINNER");
-  textCentered("CHICAGO / " + areaLabel, 139, 2, MUTED);
-  gfx->drawCircle(233, 237, 94, CYAN);
-  gfx->drawCircle(233, 237, 88, BLUE);
-
-  if (displayedBar < 0 || barCount == 0) {
-    textCentered("WHERE TO?", 222, 3, WHITE);
-  } else {
-    const String &name = barOptions[displayedBar].name;
-    int size = name.length() > 18 ? 2 : 3;
-    textCentered(name, 210, size, WHITE);
-    if (!spinning) {
-      String address = barOptions[displayedBar].address;
-      if (address.length() > 28) address = address.substring(0, 28);
-      textCentered(address, 257, 2, MUTED);
-    }
-  }
-  button(95, 347, 276, 63, spinning ? "SPINNING" :
-         selectedBar < 0 ? "SPIN" : "SPIN AGAIN", CYAN);
-  if (usingOsmBars) textCentered("Data: OpenStreetMap contributors", 418, 1, MUTED);
-}
-
 String programFlashText() {
   const esp_partition_t *partition = esp_ota_get_running_partition();
   uint32_t usedBytes = ESP.getSketchSize();
@@ -1123,8 +805,6 @@ void drawSettings() {
   } else {
     textCentered("Connecting to Wi-Fi", 220, 2, CYAN);
   }
-  textCentered(String(usingOsmBars ? "OSM" : "Saved") + ": " + areaLabel +
-               " / " + String(barCount) + " bars", 294, 1, MUTED);
   textCentered(programFlashText(), 307, 2, CYAN);
   textCentered("VOLUME " + String(audioVolume) + "%", 327, 2, WHITE);
 
@@ -1723,7 +1403,6 @@ void drawScreen() {
   if (!displayReady) return;
   switch (screen) {
     case LAUNCHER: drawLauncher(); break;
-    case NIGHT_SPINNER: drawSpinner(); break;
     case GRID_MAZE: drawMaze(); break;
     case SOUND_ART: drawSoundArt(); break;
     case GRIDLEY_SAYS: drawGridleySays(); break;
@@ -1731,47 +1410,16 @@ void drawScreen() {
   }
 }
 
-void startSpin() {
-  if (barCount == 0 || spinning) return;
-  nextBar = esp_random() % barCount;
-  if (barCount > 1 && nextBar == selectedBar) {
-    nextBar = (nextBar + 1 + esp_random() % (barCount - 1)) % barCount;
-  }
-  spinning = true;
-  spinFrame = 0;
-  lastSpinFrame = 0;
-  screenDirty = true;
-}
-
-void updateSpin() {
-  if (!spinning) return;
-  unsigned long now = millis();
-  unsigned long interval = spinFrame < 8 ? 80 : 140 + (spinFrame - 8) * 35;
-  if (lastSpinFrame && now - lastSpinFrame < interval) return;
-  lastSpinFrame = now;
-  ++spinFrame;
-  if (spinFrame >= 13) {
-    selectedBar = nextBar;
-    displayedBar = selectedBar;
-    spinning = false;
-    Serial.println("Spinner picked: " + barOptions[selectedBar].name);
-  } else {
-    displayedBar = esp_random() % barCount;
-  }
-  screenDirty = true;
-}
-
 void handleTap(int x, int y) {
   AppScreen previousScreen = screen;
   if (screen == LAUNCHER) {
-    if (x >= 84 && x <= 382 && y >= 146 && y <= 194) screen = NIGHT_SPINNER;
-    else if (x >= 84 && x <= 382 && y >= 201 && y <= 249) {
+    if (x >= 84 && x <= 382 && y >= 160 && y <= 214) {
       resetMaze();
       screen = GRID_MAZE;
-    } else if (x >= 84 && x <= 382 && y >= 256 && y <= 304) {
+    } else if (x >= 84 && x <= 382 && y >= 223 && y <= 277) {
       startSoundArt();
       screen = SOUND_ART;
-    } else if (x >= 84 && x <= 382 && y >= 311 && y <= 359) {
+    } else if (x >= 84 && x <= 382 && y >= 286 && y <= 340) {
       gridPhase = GRID_READY;
       gridTouchTracking = false;
       screen = GRIDLEY_SAYS;
@@ -1787,9 +1435,6 @@ void handleTap(int x, int y) {
     } else if (screen == GRIDLEY_SAYS) {
       if ((gridPhase == GRID_READY || gridPhase == GRID_OVER) &&
           y >= 345 && y <= 420) startGridleySays();
-    } else if (screen == NIGHT_SPINNER && x >= 95 && x <= 371 &&
-               y >= 347 && y <= 410) {
-      startSpin();
     } else if (screen == GRID_MAZE) {
       if (mazeWon || mazeCaught) return;
       if (x >= MAZE_X && x < MAZE_X + MAZE_SIZE * MAZE_CELL &&
@@ -1849,7 +1494,7 @@ void sendWifiSetupPage() {
            "margin:3rem auto;padding:0 1rem}label{display:block;margin:1rem 0}"
            "input{display:block;font:inherit;width:100%;padding:.6rem;box-sizing:border-box}"
            "button{font:inherit;padding:.7rem 1.2rem}</style><h1>Gridley Wi-Fi setup</h1>"
-           "<p>Enter a 2.4 GHz Wi-Fi network. <a href='/bars'>Edit the bar list</a>.</p>"
+           "<p>Enter a 2.4 GHz Wi-Fi network.</p>"
            "<form method='post' action='/save'><label>Network name<input name='ssid'"
            " maxlength='32' required></label><label>Wi-Fi password<input name='password'"
            " type='password' maxlength='63'></label><button>Connect</button></form></html>");
@@ -1870,124 +1515,22 @@ void saveWifi() {
   restartAt = millis() + 2500;
 }
 
-void sendBarPage() {
-  String page =
-      "<!doctype html><html><meta name='viewport' content='width=device-width,initial-scale=1'>"
-      "<title>Gridley bars</title><style>body{font:18px system-ui;max-width:36rem;"
-      "margin:2rem auto;padding:0 1rem;background:#10131c;color:#eee}"
-      "input,textarea{display:block;width:100%;box-sizing:border-box;padding:.7rem;"
-      "font:inherit;margin:.4rem 0 1rem;background:#202635;color:#fff;border:1px solid #49dce9}"
-      "input[type=hidden]{display:none}"
-      "textarea{height:19rem}button{font:inherit;padding:.7rem 1.2rem;"
-      "background:#49dce9;border:0;border-radius:.4rem}form{margin:1rem 0}"
-      "small{color:#abb4c5}li{margin:.3rem 0}</style>"
-      "<h1>Chicago Night Spinner</h1><p>Gridley picks from ";
-  page += usingOsmBars ? "OpenStreetMap bars near 60612." : "your saved list.";
-  page += "</p><p><strong>" + String(barCount) + " bars loaded.</strong>";
-  if (autoBars) page += " " + htmlEscape(barFetchStatus) + ".";
-  page += "</p>";
-  if (autoBars) {
-    page += "<form method='post' action='/bars/refresh'><button>Refresh nearby bars now</button></form>";
-    page += "<form method='post' action='/bars/source'><input type='hidden' name='mode' value='manual'>"
-            "<button>Use my saved list</button></form>";
-  } else {
-    page += "<form method='post' action='/bars/source'><input type='hidden' name='mode' value='auto'>"
-            "<button>Use nearby OpenStreetMap bars</button></form>";
-  }
-  if (networkMode != CONNECTED) {
-    page += "<p><small>Connect Gridley to 2.4 GHz Wi-Fi for automatic updates. "
-            "Your saved bars work without internet.</small></p>";
-  }
-  page += "<h2>On the spinner</h2><ul>";
-  for (uint8_t i = 0; i < barCount; ++i) {
-    page += "<li>" + htmlEscape(barOptions[i].name) + " — " +
-            htmlEscape(barOptions[i].address) + "</li>";
-  }
-  page += "</ul><h2>My saved list</h2><p>Editing this list switches Gridley to your list. "
-          "You can switch back to nearby bars above.</p>"
-          "<form method='post' action='/bars'><label>Area label<input name='area' maxlength='20' value='";
-  page += htmlEscape(manualAreaLabel);
-  page += "' required></label><label>Bars, one per line as Name | Street address"
-          "<textarea name='bars' maxlength='1800' required>";
-  page += htmlEscape(settings.getString("bars", DEFAULT_BARS));
-  page += "</textarea></label><button>Save my list</button></form>"
-          "<p><small>Automatic search covers bars and pubs within about 2 miles of "
-          "the center of 60612. It refreshes daily while Gridley is online; "
-          "missing addresses may show as ‘Address not listed’. "
-          "Data © <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap contributors</a>."
-          "</small></p></html>";
+void sendDevicePage() {
   web.sendHeader("Cache-Control", "no-store");
-  web.send(200, "text/html", page);
-}
-
-void saveBars() {
-  String newArea = web.arg("area");
-  String raw = web.arg("bars");
-  newArea.trim();
-  if (newArea.isEmpty() || newArea.length() > 20 || raw.length() > 1800 ||
-      !loadBars(raw)) {
-    web.send(400, "text/plain", "Use 1-16 lines: Name | Street address. Names must be 32 characters or fewer, addresses 45 or fewer.");
-    return;
-  }
-  manualAreaLabel = newArea;
-  areaLabel = manualAreaLabel;
-  autoBars = false;
-  usingOsmBars = false;
-  settings.putBool("autoBars", false);
-  settings.putString("area", manualAreaLabel);
-  settings.putString("bars", barListText());
-  selectedBar = displayedBar = -1;
-  spinning = false;
-  screenDirty = true;
-  web.sendHeader("Cache-Control", "no-store");
-  web.send(200, "text/html", "<h1>Saved to Gridley</h1><p><a href='/bars'>Edit again</a></p>");
-}
-
-void setBarSource() {
-  String mode = web.arg("mode");
-  if (mode == "auto") {
-    autoBars = true;
-    settings.putBool("autoBars", true);
-    useCachedOsmBars();
-    nextBarRefreshAt = millis();
-    barFetchStatus = networkMode != CONNECTED ? "Waiting for Wi-Fi" :
-        lastBarRequestAt && millis() - lastBarRequestAt < BAR_MANUAL_MIN_MS ?
-        "Recently checked; try again shortly" : "Refresh starting";
-  } else if (mode == "manual") {
-    autoBars = false;
-    settings.putBool("autoBars", false);
-    useManualBars();
-  } else {
-    web.send(400, "text/plain", "Choose nearby bars or my saved list.");
-    return;
-  }
-  web.sendHeader("Location", "/bars");
-  web.send(303, "text/plain", "Opening bars");
-}
-
-void requestBarRefresh() {
-  autoBars = true;
-  settings.putBool("autoBars", true);
-  if (!usingOsmBars) useCachedOsmBars();
-  nextBarRefreshAt = millis();
-  barFetchStatus = networkMode != CONNECTED ? "Waiting for Wi-Fi" :
-      barFetchRunning ? "Refreshing from OpenStreetMap..." :
-      lastBarRequestAt && millis() - lastBarRequestAt < BAR_MANUAL_MIN_MS ?
-      "Recently checked; try again shortly" : "Refresh starting";
-  web.sendHeader("Location", "/bars");
-  web.send(303, "text/plain", "Opening bars");
+  web.send(200, "text/html",
+           "<!doctype html><html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+           "<title>Gridley</title><style>body{font:18px system-ui;max-width:32rem;"
+           "margin:3rem auto;padding:0 1rem;background:#10131c;color:#eee}"
+           "h1{color:#49dce9}</style><h1>Gridley is online</h1>"
+           "<p>Pick a program on the puck to play.</p></html>");
 }
 
 void configureWeb() {
   web.on("/", HTTP_GET, []() {
     if (networkMode == SETUP) sendWifiSetupPage();
-    else sendBarPage();
+    else sendDevicePage();
   });
   web.on("/save", HTTP_POST, saveWifi);
-  web.on("/bars", HTTP_GET, sendBarPage);
-  web.on("/bars", HTTP_POST, saveBars);
-  web.on("/bars/source", HTTP_POST, setBarSource);
-  web.on("/bars/refresh", HTTP_POST, requestBarRefresh);
   web.onNotFound([]() {
     if (networkMode == SETUP) {
       web.sendHeader("Location", "http://192.168.4.1/");
@@ -2058,12 +1601,6 @@ void setup() {
   audioVolume = settings.getUChar("volume", 60);
   gridBest = settings.getUShort("gridBest", 0);
   if (audioVolume > 100) audioVolume = 100;
-  manualAreaLabel = settings.getString("area", "60612");
-  autoBars = settings.getBool("autoBars", true);
-  useManualBars();
-  if (autoBars) useCachedOsmBars();
-  barFetchStatus = usingOsmBars ? "Using saved OpenStreetMap bars" : "Waiting for Wi-Fi";
-  barFetchQueue = xQueueCreate(1, sizeof(BarFetchResult));
 
   Wire.begin(IIC_SDA, IIC_SCL);
   powerReady = power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL);
@@ -2121,8 +1658,6 @@ void loop() {
       networkMode = CONNECTED;
       mdnsReady = MDNS.begin("gridley");
       if (mdnsReady) MDNS.addService("http", "tcp", 80);
-      configTime(0, 0, "time.cloudflare.com", "pool.ntp.org");
-      if (!nextBarRefreshAt) nextBarRefreshAt = millis() + 3000;
       screenDirty = true;
     } else if (millis() - connectStarted > 20000) {
       WiFi.disconnect();
@@ -2136,9 +1671,6 @@ void loop() {
 
   if (restartAt && static_cast<int32_t>(millis() - restartAt) >= 0) ESP.restart();
   pollTouch();
-  updateSpin();
-  processBarFetchResult();
-  maybeRefreshBars();
   pumpAudio();
   if (screenDirty) {
     drawScreen();

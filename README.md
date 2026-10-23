@@ -1,193 +1,138 @@
 # Gridley firmware
 
-This sketch targets the **ESP32-S3-Touch-AMOLED-1.75C**, the 466 × 466
-aluminum-case board. It is not for the similar 1.75 board without the C suffix.
+Gridley is a little programmable puck: a round touchscreen, motion controls,
+a speaker, microphones, and a bright blue grid straight out of a sci-fi arcade.
+I built it on the [Waveshare ESP32-S3-Touch-AMOLED-1.75C](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C), inspired by [Muse Gadgets](https://gadgets.muse.ai/) and *Tron*. The idea is simple: buy an off-the-shelf board, flash this firmware, then make the puck your own.
 
-The home screen is a bright blue perspective-grid app launcher with a large
-white **GRIDLEY** title, **Grid Maze**, **Disc Defender**, **Gridley Says**,
-**Sound Grid**, and **Settings**. Its prompt is "PICK A PROGRAM, USER."
-Settings appears as a smaller utility button below the four programs and shows
-battery, USB, charging, Wi-Fi, volume, and firmware status.
+This is an independent hobby project, not a Muse or Disney product. The firmware
+is for the **1.75C aluminum-case board** with a 466 × 466 display. The similarly
+named 1.75 board without the **C** uses different hardware.
 
-Tap a launcher button to open a program and **BACK** to return.
+## Build one
 
-**Grid Maze** creates a new connected Tron-style maze each round. Tilt Gridley
-to move the glowing puck through the cyan corridors to the gold exit while
-avoiding the pink sentinel. It patrols the maze and follows you down clear
-straight corridors. Touching it plays a descending sound and shows a brief
-"ZAPPED!" screen, then starts a new round. The onboard QMI8658 motion sensor
-drives the puck; tapping the maze nudges it one square in the direction you
-tapped. Press BOOT to launch a small missile toward the sentinel. It follows
-the corridor route to where the sentinel was when you fired, up to six tiles;
-the sentinel can move out of its path. Only a direct hit knocks it back and
-stuns it briefly, letting you pass through the stunned sentinel. A miss still
-uses the shot. The missile recharges in seven seconds, with the remaining time
-shown below the maze. Downward
-movement needs a little more tilt, so a normal viewing angle is less likely
-to move the puck.
-Reaching the exit triggers an ascending sound, a short pixel-art explosion,
-and a congratulations screen, then starts another new maze automatically. If
-the sensor is unavailable, touch control still works.
+### 1. Get the parts
 
-**Gridley Says** is a quick reaction game inspired by physical command toys.
-Follow each randomly chosen command before the timer runs out: shake the puck,
-twist the puck quickly, tilt left or right and hold briefly, tap the
-touchscreen, swipe up, down, left, or right, or press the BOOT button once.
-Swipe commands require the displayed direction; a clear swipe in another
-direction ends the round. The commands get faster as your score rises, and your
-best score is saved on the device. Shake and tilt use the accelerometer; the
-quick twist uses the gyroscope. Tap **START** or briefly press BOOT to play. A
-wrong touch or button press ends the round, and a missed motion times out.
-Return the puck toward its starting angle between tilt commands. The BOOT
-button still clears Wi-Fi after
-a three-second hold, even while this game is open. Each command has a short
-two-note cue; correct moves play an ascending chime and a loss plays a
-descending one. The sounds follow the volume setting and work without Wi-Fi.
+- [Waveshare ESP32-S3 1.75-inch round AMOLED board, aluminum case, no battery](https://www.amazon.com/dp/B0GGXHXMRW) ([Waveshare specs](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C))
+- [EEMB 402535 3.7 V, 320 mAh LiPo battery with a 1.25 mm two-pin plug](https://www.amazon.com/dp/B08215N9R8), if you want portable power
+- A USB-C **data** cable and a computer for flashing
 
-**Disc Defender** is a quick arcade game about protecting the glowing core.
-Tilt the puck left or right to spin the bright shield arc continuously in
-either direction around the core. Touch or drag around the ring to put the arc
-at a specific spot. Tilt steering stops while a finger is on the ring, so the
-two controls do not fight each other. The pink shots now approach more slowly
-to leave time to aim. The arc blocks them automatically when they reach it,
-earning one point. Press BOOT or tap the center core as a shot approaches to
-charge the shield briefly; a well-aimed
-charged block earns three points. This is a shield boost, not a shot. Pink
-shots that miss the arc keep moving toward the core and cost a hit point if
-they reach it. Build a streak, protect three hit points, and beat the saved
-high score. The speaker makes short arcade tones for blocks and core hits.
-Touch aiming works even if the motion sensor is unavailable.
-Each new pink shot starts at least about 18% of the screen width away from the
-previous shot's starting point along the outer ring, so consecutive shots
-cannot keep coming from almost the same place.
+The board can be programmed over USB before you install the battery. Waveshare
+also sells a version with a battery included; check the exact board model and
+connector polarity if you use different parts.
 
-**Sound Grid** turns the two onboard microphones into a live neon artwork.
-Large rings, rays, and color pulses react to nearby voices, music, and
-other sounds. It adjusts to the room's background noise automatically. The
-microphones are sampled only while Sound Grid is open; tap **BACK** to stop
-listening. The artwork runs entirely on the puck without Wi-Fi or a cloud
-service and does not save or transmit audio. Its live **dBFS** number measures
-the microphone signal relative to digital full scale: values closer to 0 mean
-louder sound. It is not a calibrated environmental dB SPL meter.
+### 2. Check the battery plug before connecting it
 
-If no network is configured or a saved connection fails, the board creates a
-setup network. Join it and open http://192.168.4.1/ in a browser. The network
-name and password appear in Settings. Enter your normal 2.4 GHz Wi-Fi details
-on that page. Those details are saved on the board, not in source control.
-When connected, `http://gridley.local/` or the IP shown in Settings displays
-a simple device page.
+**Do not plug in a battery just because the connector fits.** The linked EEMB
+battery's two wires were in the opposite positions from what my board needed.
+The fix is to change the wire positions *in the plug housing* so the battery's
+positive lead reaches the board's **+** contact and its negative lead reaches
+**−**. You are not reversing the electrical polarity supplied to the board.
 
-When connected, hold the **BOOT** button for three seconds to clear the saved
-Wi-Fi details and show the setup network again.
+With the battery and USB disconnected, compare the plug to the polarity marks
+on your own board. I used [this video](https://www.youtube.com/watch?v=PaxzYtSDF4E)
+to learn how to release and swap the connector contacts. Keep the two bare
+contacts from touching each other, and verify the finished plug with a
+multimeter before connecting it. If you cannot confirm which contact is
+positive, use a battery already wired for this board or get help from someone
+experienced with LiPo connectors. Never connect or charge it with polarity
+reversed.
 
-Outside Grid Maze, Gridley Says, and Disc Defender, double tap **BOOT** (two quick
-press-and-release actions, within about 450 ms) to play the locally installed
-sound through the built-in speaker. The sound is stored in the firmware, so
-playback works without Wi-Fi. A single tap has no action there. The
-three-second Wi-Fi reset waits until BOOT is released before restarting,
-preventing an accidental entry into flashing mode.
+### 3. Get the firmware ready
 
-In **Settings**, tap the volume bar to choose a level from 0 to 100 in 5%
-increments, or use the **−** and **+** buttons to change it by 5%. Changes take
-effect immediately and are saved on the board for the next power-on. Settings
-also shows the percentage of the program flash partition used by the installed
-firmware. This does not include the separate data partition or represent all
-32 MB of flash. Everything fits on one screen without scrolling. Battery and
-charging values are read when Settings opens; leave and reopen it to refresh
-them.
+Clone this repository, then open `WaveshareStarter/WaveshareStarter.ino` in the
+Arduino IDE:
 
-## Add or replace the BOOT sound
+```sh
+git clone https://github.com/joshholat/gridley-firmware.git
+cd gridley-firmware
+```
 
-The supplied MP3 is committed as `assets/tron-legacy.mp3`. To prepare it for a
-fresh build:
+Follow [Waveshare's 1.75C Arduino setup guide](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C/Arduino)
+for the ESP32-S3 board settings and USB connection. Install these versions
+through the Arduino IDE's Boards and Library Managers:
 
-1. Install the converter dependency: `python3 -m pip install miniaudio`.
-2. Run `python3 tools/prepare_audio.py`.
-3. Compile and upload `WaveshareStarter/WaveshareStarter.ino`.
+- **esp32 by Espressif Systems 3.3.11** in Arduino Boards Manager
+- **GFX Library for Arduino 1.6.4** and **XPowersLib 0.2.6**
+- **SensorLib 0.5.1** for touch and motion sensing
 
-The converter makes an ignored `WaveshareStarter/audio_clip.h` containing
-16 kHz stereo PCM audio. Clips must be 15 seconds or shorter. The sketch still
-builds without that generated file, but the double tap only logs that no sound
-is installed. To use a different clip, pass its path to the converter. The
-current board has the 3.32-second clip supplied by the user.
+The sketch also uses the ESP32 core's `ESP_I2S` library. Its ES8311 speaker
+and ES7210 microphone driver files are already in `WaveshareStarter/`.
+Waveshare's example source and library bundle are linked from its setup guide.
 
-## Source and dependencies
+If you want the BOOT-button sound in your build, generate the audio header
+*before* compiling:
 
-- Sketch: WaveshareStarter/WaveshareStarter.ino
-- Board pins: WaveshareStarter/pin_config.h
-- Espressif Arduino ESP32 core: **3.3.11**
-- Waveshare's bundled **GFX Library for Arduino 1.6.4** and
-  **XPowersLib 0.2.6**
-- **SensorLib 0.5.1** for the CST9217 touch controller
-- The same SensorLib installation drives the QMI8658 tilt sensor
-- ESP32 Arduino's built-in `ESP_I2S` library for audio output and microphone input
-- `es8311.c`, `es8311.h`, and `es8311_reg.h` from Waveshare's 1.75C
-  `07_ES8311` example (Espressif Apache-2.0 licensed codec driver)
-- `es7210.cpp`, `es7210.h`, and `audio_hal.h` from Waveshare's 1.75C
-  `06_ES7210` example (Espressif MIT licensed microphone driver)
+```sh
+python3 -m pip install miniaudio
+python3 tools/prepare_audio.py path/to/your-clip.mp3
+```
 
-The board pin map and display/PMIC initialization follow Waveshare's official
-examples at commit 4bfdc80eedbf95031e384610796bed15e0240312:
-https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C
+Use an MP3 up to 15 seconds long. The converter writes the ignored
+`WaveshareStarter/audio_clip.h` file. Without it, the rest of the firmware
+still builds, but the double tap has no sound to play. The script uses
+`assets/tron-legacy.mp3` if you omit the path; check that you have rights to
+use or redistribute any clip you choose.
 
-The sketch sets the AXP2101 charger to **100 mA, 4.2 V** for the connected
-320 mAh EEMB single-cell LiPo. Check that the battery's red wire reaches the
-board's + contact and black wire reaches - before running on or charging
-the battery.
+### 4. Flash it and make it yours
 
-## Backup
+Connect the board to your laptop with the USB-C data cable, select its serial
+port in the Arduino IDE, and upload `WaveshareStarter/WaveshareStarter.ino`.
+Flashing replaces the factory firmware. If you may want to restore it later,
+back up the board's flash first and keep the backup private: it may contain
+saved Wi-Fi details. If upload fails, see [Waveshare's flashing guide](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75C/Firmware-Flashing)
+for recovery and download mode.
 
-backups/factory-original-2026-10-20.bin is a full 32 MB copy of the
-board's pre-flash memory. It may contain saved network details, so keep it
-private. The file is ignored by Git. Its SHA-256 checksum is in the matching
-`.sha256` file.
+An AI coding agent with access to this repository, your Arduino toolchain, and
+the board's USB port can do the software setup and flashing with you. For
+example, ask it:
 
-## Live check, 2026-10-20
+> Read this README and Waveshare's Arduino guide for the **1.75C** board.
+> Install the listed dependencies, compile `WaveshareStarter/WaveshareStarter.ino`,
+> upload it over USB, and verify that Gridley boots. Then help me change the
+> launcher or add a program of my own. Confirm the board and port before
+> flashing; back up the factory image first if I want to keep it.
 
-The launcher compiled, flashed, and passed upload verification. Its serial
-status reported `Wi-Fi: setup | Battery: 3.97 V | USB: yes | charging: yes`.
-The board was not yet connected to a home Wi-Fi network at this check.
+Hardware work still needs a human to check the battery connector and attach
+the battery safely. Once the firmware is running, edit the sketch to put
+whatever you want on the puck.
 
-## Sound Grid live check, 2026-10-22
+## First run
 
-The Sound Grid build compiled at 46% of the program partition. A diagnostic
-boot on the connected puck read both ES7210 channels. With the onboard sound
-playing, microphone RMS rose from roughly 35 in a quiet room to over 3,000,
-and the artwork's level rose to 1.0. The final launcher build then flashed and
-passed upload verification. Its serial status showed Wi-Fi connected, speaker
-ready, and 4.14 V battery voltage. The display artwork was not visually
-inspected from a camera during this check.
+Gridley opens to a blue perspective-grid launcher. Tap a program to open it
+and **BACK** to return. The current firmware includes:
 
-## Sensitivity and launcher update, 2026-10-22
+| Program | What it does |
+| --- | --- |
+| **Grid Maze** | Tilt or tap to guide a puck through a maze, dodge a sentinel, and press BOOT to fire a short-range missile. |
+| **Disc Defender** | Tilt or drag to aim a shield around the core; press BOOT or tap the center to charge a block. |
+| **Gridley Says** | Follow timed shake, twist, tilt, tap, swipe, and BOOT commands. |
+| **Sound Grid** | Turn the two microphones into a live neon sound visualizer. Audio stays on the device. |
+| **Settings** | Check battery, charging, USB, Wi-Fi, volume, and program-flash usage. |
 
-The Sound Grid sensitivity was increased for nearby speech, and the artwork
-now shows live microphone dBFS. The three programs were regrouped above a
-smaller Settings utility button with an opaque background. In a low-volume
-onboard playback check, roughly -56 to -54 dBFS produced a visible artwork
-level of about 0.25 to 0.56, while quiet readings near -60 dBFS stayed low.
+If Gridley has no saved Wi-Fi connection, it creates a setup network. Its name
+and password appear in **Settings**. Join that network and open
+<http://192.168.4.1/> to enter your 2.4 GHz Wi-Fi details. The details are
+saved on the board, not in this repository. Once connected, open
+<http://gridley.local/> or the IP address shown in Settings to see the device
+page. Hold **BOOT** for three seconds to clear the saved Wi-Fi configuration.
 
-The next pass expanded Sound Grid's rays and rings across more of the round
-display, moved the dBFS readout into its center, increased the visual response
-to nearby speech, and replaced the faint Settings icon with a larger white
-gear. The mic ADC remains at the same hardware gain; these changes affect the
-artwork's sensitivity and scale.
+Outside the games, double tap **BOOT** to play the sound compiled into your
+firmware, if you generated an audio header. Settings lets you adjust speaker
+volume. The Sound Grid dBFS readout shows microphone level relative to digital
+full scale; it is not a calibrated sound-pressure meter.
 
-## Gridley Says live check, 2026-10-22
+## Make your own program
 
-The first playable build adds gyroscope flicks, accelerometer shake and tilt,
-touchscreen tap and swipe, and BOOT button commands. It compiled at 47% of the
-program partition, flashed with verification, and booted with the accelerometer,
-gyroscope, speaker, and Wi-Fi ready. Timing and thresholds are initial values
-for play testing and may need adjustment based on how the puck feels in hand.
+The main sketch is `WaveshareStarter/WaveshareStarter.ino`; hardware pins are
+in `WaveshareStarter/pin_config.h`. Start by changing a launcher label,
+color, or screen, then upload again. For a new feature, the existing games
+show how to read touch, the QMI8658 motion sensor, the BOOT button, and the
+speaker. `tools/prepare_audio.py` converts a short MP3 into audio that can
+play without Wi-Fi.
 
-The flick command now requires a fast twist around the screen's face, while
-left and right tilts must be held briefly. This separates a quick right lean
-from a flick. The game screen calls the BOOT action **PRESS BUTTON**. Its
-countdown now uses sixteen discrete segments so each step clears cleanly.
-Taps outside an app button no longer redraw the launcher or delay the next
-attempt.
-
-On a missed command or timeout, Gridley Says now plays a short pixel-art loss
-animation with a drooping face and falling tears before showing the score and
-Try Again button. The effect renders in a small framebuffer when available to
-keep the animation smooth on the puck's display.
+The board setup and pin map follow [Waveshare's 1.75C examples](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C).
+The included ES8311 driver comes from Waveshare's `07_ES8311` example
+(Espressif Apache-2.0); the ES7210 driver comes from `06_ES7210` (Espressif
+MIT). The sketch configures the AXP2101 charger for **100 mA, 4.2 V** for the
+320 mAh single-cell battery listed above. Recheck charging settings before
+using a different battery.
